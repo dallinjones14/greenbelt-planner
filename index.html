@@ -114,6 +114,7 @@ ol.list li{grid-template-columns:54px 14px minmax(0,1fr) auto 30px}
 .plan .off{font-size:.8rem;color:var(--warn)}
 .cardhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
 .cardhead h2{margin:0;font:800 1.2rem var(--display)}
+.note{display:block;margin-top:6px;font-size:.85rem;color:var(--teal);font-weight:600}
 .here{margin:0;font-size:.9rem;background:var(--tealSoft);border-radius:12px;padding:9px 12px}
 .stopic.planned{box-shadow:0 0 0 3px var(--sun),0 2px 6px rgba(0,0,0,.45)}
 .locbtn{position:absolute;z-index:1000;right:10px;bottom:44px;width:34px;height:34px;border-radius:12px;border:0;background:#fff;box-shadow:0 3px 12px rgba(29,42,68,.22);cursor:pointer;display:grid;place-items:center}
@@ -432,38 +433,72 @@ function placeName(la,lo){let b=null,bd=1e9;TRAILHEADS.forEach(t=>{const d=hav(l
 
 // ---------------- routing ----------------
 let lastStartNode=-1;
+const scDir=i=>st.dir*G.lon[i]; // lower = farther in the chosen direction
+const dirWord=()=>st.dir>0?"west":"east", oppWord=()=>st.dir>0?"east":"west";
+// node at about `want` miles from `from`, as far as possible in the chosen direction
+function pickToward(D,from,want){const s0=scDir(from);let best=-1,bs=Infinity;
+  for(let i=0;i<D.length;i++){if(Math.abs(D[i]-want)<=0.12&&scDir(i)<bs){bs=scDir(i);best=i;}}
+  if(best>=0&&(s0-bs)*50>=want*0.3)return best;
+  let far=-1,fs=Infinity;for(let i=0;i<D.length;i++){if(isFinite(D[i])&&scDir(i)<fs){fs=scDir(i);far=i;}}return far;}
+// stitch shortest paths through a sequence of nodes
+function joinPath(seq){let nodes=[seq[0]];const marks=[0];
+  for(let i=1;i<seq.length;i++){const last=nodes[nodes.length-1];
+    if(seq[i]!==last){const sp=dijkstra(last);if(isFinite(sp.dist[seq[i]]))nodes=nodes.concat(pathTo(sp.prev,seq[i]).slice(1));}
+    marks.push(nodes.length-1);}
+  const cum=[0];for(let k=1;k<nodes.length;k++)cum.push(cum[k-1]+hav(G.lat[nodes[k-1]],G.lon[nodes[k-1]],G.lat[nodes[k]],G.lon[nodes[k]]));
+  return {nodes,cum,marks};}
+
 function compute(){if(!G.lat.length)return null;
   const s=nearestNode(st.start.lat,st.start.lon);
   if(s!==lastStartNode){SP=dijkstra(s);lastStartNode=s;}
-  const {dist,prev}=SP;let warn="",t,out;
-  if(st.mode==="ab"){t=nearestNode(st.end.lat,st.end.lon);if(!isFinite(dist[t])){warn="Those two points aren’t connected by the Greenbelt path. Move one of them onto the same stretch of path.";return {nodes:[s],out:0,total:0,warn,s,t:s};}
-    // route through planned stops, in order of distance from the start
-    const wps=STOPS.filter(isPlanned).map(x=>nearestNode(x.lat,x.lon)).filter(n=>isFinite(dist[n])&&n!==s&&n!==t).sort((a,b)=>dist[a]-dist[b]);
-    let nodes=[s];[...wps,t].forEach(n=>{const sp=dijkstra(nodes[nodes.length-1]);const seg=pathTo(sp.prev,n);if(isFinite(sp.dist[n]))nodes=nodes.concat(seg.slice(1));});
-    const cum=[0];for(let k=1;k<nodes.length;k++)cum.push(cum[k-1]+hav(G.lat[nodes[k-1]],G.lon[nodes[k-1]],G.lat[nodes[k]],G.lon[nodes[k]]));
-    out=cum[cum.length-1];return {nodes,cum,out,total:out,warn,s,t};}
-  else{const want=st.mode==="round"?st.dist/2:st.dist;const sc=i=>st.dir*G.lon[i]; // lower is farther in chosen direction
-    const startSc=sc(s);let best=-1,bs=Infinity;
-    for(let i=0;i<dist.length;i++){if(Math.abs(dist[i]-want)<=0.12&&sc(i)<bs){bs=sc(i);best=i;}}
-    const progressMi=best>=0?(startSc-bs)*50:0;
-    if(best<0||progressMi<want*0.3){ // not enough path that way: go to the farthest reachable point in that direction
-      let far=-1,fs=Infinity;for(let i=0;i<dist.length;i++){if(isFinite(dist[i])&&sc(i)<fs){fs=sc(i);far=i;}}
-      best=far;const avail=dist[far];
-      warn=st.mode==="round"
-        ?`Only about ${avail.toFixed(1)} mi of path lies ${st.dir>0?"west":"east"} of your start, so this round trip tops out near ${(avail*2).toFixed(1)} mi. Start farther ${st.dir>0?"east":"west"} or head the other way.`
-        :`The path ends about ${avail.toFixed(1)} mi ${st.dir>0?"west":"east"} of your start. Switch to round trip, start farther ${st.dir>0?"east":"west"}, or flip direction.`;}
-    t=best;out=dist[t];}
-  const nodes=pathTo(prev,t);const cum=[0];for(let k=1;k<nodes.length;k++)cum.push(cum[k-1]+hav(G.lat[nodes[k-1]],G.lon[nodes[k-1]],G.lat[nodes[k]],G.lon[nodes[k]]));
-  const total=st.mode==="round"?out*2:out;
-  return {nodes,cum,out,total,warn,s,t};}
+  const dist=SP.dist;let warn="",note="",seq,turnIdx=-1,t;
+  // planned stops become waypoints the route must pass
+  const planned=STOPS.filter(isPlanned).map(x=>({x,n:nearestNode(x.lat,x.lon)}));
+  const lost=planned.filter(p=>!isFinite(dist[p.n]));
+  const wp=planned.filter(p=>isFinite(dist[p.n])&&p.n!==s);
+  const byDist=(a,b)=>dist[a.n]-dist[b.n];
+  const fwd=wp.filter(p=>scDir(p.n)<=scDir(s)).sort(byDist), back=wp.filter(p=>scDir(p.n)>scDir(s)).sort(byDist);
+
+  if(st.mode==="ab"){t=nearestNode(st.end.lat,st.end.lon);
+    if(!isFinite(dist[t]))return {nodes:[s],cum:[0],out:0,total:0,warn:"Those two points aren’t connected by the Greenbelt path. Move one of them onto the same stretch of path.",note:"",s,t:s};
+    seq=[s,...wp.slice().sort(byDist).map(p=>p.n),t];}
+  else if(st.mode==="round"){
+    const behind=back.length?2*dist[back[back.length-1].n]:0;         // out and back to stops behind you
+    const reach=fwd.length?dist[fwd[fwd.length-1].n]:0;                 // farthest stop ahead
+    const want=Math.max((st.dist-behind)/2,reach);
+    let turn;
+    if(fwd.length&&want-reach<0.12)turn=fwd[fwd.length-1].n;
+    else{const from=fwd.length?fwd[fwd.length-1].n:s;const D0=from===s?dist:dijkstra(from).dist;turn=pickToward(D0,from,Math.max(0.05,want-(from===s?0:dist[from])));}
+    seq=[s];if(back.length){back.forEach(p=>seq.push(p.n));seq.push(s);}
+    fwd.forEach(p=>{if(p.n!==turn)seq.push(p.n);});turnIdx=seq.length;seq.push(turn,s);t=turn;}
+  else{ // one way: visit stops behind first, then stops ahead, then keep going to fill the distance
+    seq=[s];if(back.length)back.forEach(p=>seq.push(p.n));fwd.forEach(p=>seq.push(p.n));
+    const J0=joinPath(seq),used=J0.cum[J0.cum.length-1],last=seq[seq.length-1];
+    if(st.dist-used>0.1){const D0=last===s?dist:dijkstra(last).dist;seq.push(pickToward(D0,last,st.dist-used));}
+    t=seq[seq.length-1];}
+
+  const J=joinPath(seq),total=J.cum[J.cum.length-1];
+  const out=st.mode==="round"?J.cum[J.marks[turnIdx]]:total;
+  if(st.mode!=="ab"){
+    if(total>st.dist+0.3&&wp.length)note=`Your walk grew to ${total.toFixed(1)} mi to fit in your stops.`;
+    else if(total<st.dist-0.3)warn=st.mode==="round"
+      ?`There’s only enough Greenbelt ${dirWord()} of your start for about ${total.toFixed(1)} mi round trip. Start farther ${oppWord()} or head the other way.`
+      :`The path runs out after about ${total.toFixed(1)} mi. Switch to round trip, start farther ${oppWord()}, or flip direction.`;
+    else if(wp.length)note="Route adjusted to pass your stops.";}
+  else if(wp.length)note="Route goes through your stops.";
+  if(lost.length)warn=(warn?warn+" ":"")+`${lost.map(p=>p.x.name).join(", ")} can’t be reached along the path from this start.`;
+  return {nodes:J.nodes,cum:J.cum,out,total,warn,note,s,t};}
 
 function pointAtMile(m){const n=R.nodes,c=R.cum;for(let k=1;k<n.length;k++){if(c[k]>=m){const f=(m-c[k-1])/((c[k]-c[k-1])||1);
   return [G.lat[n[k-1]]+f*(G.lat[n[k]]-G.lat[n[k-1]]),G.lon[n[k-1]]+f*(G.lon[n[k]]-G.lon[n[k-1]])];}}return [G.lat[n[n.length-1]],G.lon[n[n.length-1]]];}
 
 function stopsOnWalk(){if(!R||R.nodes.length<2)return [];const out=[];
-  STOPS.forEach(s=>{let bk=-1,bd=s.type==="store"?0.35:0.3;R.nodes.forEach((u,k)=>{const d=hav(s.lat,s.lon,G.lat[u],G.lon[u]);if(d<bd){bd=d;bk=k;}});
-    if(bk<0)return;if(st.mode==="ab"){let first=bk;for(let k=0;k<R.nodes.length;k++){if(hav(s.lat,s.lon,G.lat[R.nodes[k]],G.lon[R.nodes[k]])<=bd+0.01){first=k;break;}}bk=first;}const w=R.cum[bk];out.push({s,w,leg:st.mode==="round"?"Out":"",off:bd});
-    if(st.mode==="round"&&R.out-w>0.15)out.push({s,w:R.total-w,leg:"Back",off:bd});});
+  STOPS.forEach(x=>{const lim=x.type==="store"?0.35:0.3;const d=R.nodes.map(u=>hav(x.lat,x.lon,G.lat[u],G.lon[u]));
+    let best=Infinity;for(const v of d)if(v<best)best=v;if(best>lim)return;
+    const passes=[];let run=null;
+    for(let k=0;k<d.length;k++){if(d[k]<=best+0.03){if(!run||k>run.end+3){run={k,end:k,d:d[k]};passes.push(run);}else{run.end=k;if(d[k]<run.d){run.d=d[k];run.k=k;}}}}
+    const pick=st.mode==="round"&&passes.length>1?[passes[0],passes[passes.length-1]]:[passes[0]];
+    pick.forEach((p,i)=>out.push({s:x,w:R.cum[p.k],leg:st.mode==="round"?(i===0?"Out":"Back"):"",off:best}));});
   return out.sort((a,b)=>a.w-b.w);}
 
 // planned breaks along the walk: each planned stop counted once (round trip: on the leg you pick)
@@ -513,6 +548,7 @@ function render(fit){R=compute();routeLayer.clearLayers();markLayer.clearLayers(
   $("desc").innerHTML=st.mode==="round"?`Start at <b>${sN}</b>, walk ${R.out.toFixed(1)} mi and turn around at <b>${tN}</b> around ${clockAt(timeAt(R.out,visits))}, then retrace your steps.`
     :st.mode==="one"?`Start at <b>${sN}</b> and walk ${R.out.toFixed(1)} mi to finish at <b>${tN}</b>. Plan a ride back.`
     :`Walk from <b>${sN}</b> to <b>${st.end.name||tN}</b> along the Greenbelt: ${R.out.toFixed(1)} mi.`;
+  if(R.note)$("desc").innerHTML+=` <span class="note">${R.note}</span>`;
   $("warn").hidden=!R.warn;$("warn").textContent=R.warn;
   renderList(visits);updateHere();
   if(fit&&ll.length>1)map.fitBounds(L.latLngBounds(ll),{padding:[40,40]});
@@ -522,7 +558,7 @@ function renderPlan(visits,brk){const ol=$("plan");ol.innerHTML="";$("planEmpty"
   $("planTitle").textContent=visits.length?`My stops (${visits.length})`:"My stops";
   $("planBreaks").textContent=brk?`${fmtDur(brk)} of breaks`:"";
   visits.forEach(v=>{const li=document.createElement("li");
-    li.innerHTML=`<span class="dot ${v.s.type}"></span><span><span class="nm"></span><br>${v.w!=null?`<span class="when">mile ${v.w.toFixed(1)}${v.leg?" · "+v.leg.toLowerCase():""} · arrive ${clockAt(timeAt(v.w,visits))}</span>`:`<span class="off">Not on this route. ${st.mode==="ab"?"It isn’t reachable along this stretch of path.":"Switch to Start → End to route through it, or change your start or distance."}</span>`}</span><button type="button" class="x" aria-label="Remove">×</button><div class="opts"></div>`;
+    li.innerHTML=`<span class="dot ${v.s.type}"></span><span><span class="nm"></span><br>${v.w!=null?`<span class="when">mile ${v.w.toFixed(1)}${v.leg?" · "+v.leg.toLowerCase():""} · arrive ${clockAt(timeAt(v.w,visits))}</span>`:`<span class="off">Can’t be reached along the Greenbelt from this start.</span>`}</span><button type="button" class="x" aria-label="Remove">×</button><div class="opts"></div>`;
     li.querySelector(".nm").textContent=v.s.name;
     const opts=li.querySelector(".opts");
     const bs=document.createElement("select");bs.setAttribute("aria-label","Break length");[0,5,10,15,20,30,45,60].forEach(m=>{const o=document.createElement("option");o.value=m;o.textContent=m?`${m} min break`:"No break";bs.appendChild(o);});
@@ -718,7 +754,8 @@ async function geocodeStops(){const cache=store.get("gbp2_geo")||{};let changed=
   if(ways){buildGraph(ways);
     ways.forEach(w=>L.polyline(w.pts,{color:"#ffffff",weight:2.5,opacity:.9,dashArray:"2 7",lineCap:"round",interactive:false}).addTo(trailLayer));
     $("loading").hidden=true;}
-  else{usingFallback=true;buildGraph([{ids:FALLBACK.map((_,i)=>i),pts:FALLBACK}]);L.polyline(FALLBACK,{color:"#ffffff",weight:2.5,opacity:.9,dashArray:"2 7",lineCap:"round"}).addTo(trailLayer);
+  else{usingFallback=true;const dense=[];FALLBACK.forEach((q,i)=>{if(i){const o=FALLBACK[i-1],n=Math.ceil(hav(o[0],o[1],q[0],q[1])/0.05);for(let k=1;k<n;k++)dense.push([o[0]+(q[0]-o[0])*k/n,o[1]+(q[1]-o[1])*k/n]);}dense.push(q);});
+    buildGraph([{ids:dense.map((_,i)=>i),pts:dense}]);L.polyline(FALLBACK,{color:"#ffffff",weight:2.5,opacity:.9,dashArray:"2 7",lineCap:"round"}).addTo(trailLayer);
     $("loading").textContent="Couldn’t reach OpenStreetMap, showing an approximate path";setTimeout(()=>$("loading").hidden=true,6000);}
   render(true);
   startWatch();
