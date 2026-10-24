@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Greenbelt Marathon Planner</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: satellite map up top (left on desktop), planning controls beneath (right rail on desktop) */
+:root{
+  --bg:#eef2ee; --panel:#ffffff; --ink:#16231d; --muted:#5b6b62; --line:#d5ddd6;
+  --route:#19e3a8; --routeEdge:#06372a; --trail:#ffe08a; --coffee:#8a5a33; --food:#d8344a;
+  --accent:#14705a; --warn:#8a5200; --warnBg:#fff1d6;
+  --display:"Bricolage Grotesque","Avenir Next",system-ui,sans-serif;
+  --body:"Atkinson Hyperlegible",system-ui,-apple-system,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#0e1613; --panel:#151f1b; --ink:#e4ece6; --muted:#9aaba1; --line:#2a3832;
+  --accent:#4fd1a8; --warn:#ffc46b; --warnBg:#2e2412; --coffee:#c08a5c; color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 var(--body);
+  padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+.app{display:grid;grid-template-columns:minmax(0,1fr) 400px;height:100%}
+#map{height:100%;min-height:0;background:#1b2420}
+.side{overflow-y:auto;border-left:1px solid var(--line);background:var(--panel);
+  padding:18px max(18px,env(safe-area-inset-right,0px)) 28px 18px;display:grid;gap:18px;align-content:start}
+@media (max-width:860px){
+  .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto;height:auto}
+  #map{height:58svh;min-height:340px}
+  .side{border-left:0;border-top:1px solid var(--line);overflow:visible;
+    padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+}
+h1{font:800 1.7rem/1.05 var(--display);margin:0;letter-spacing:-.01em}
+h1 small{display:block;font:500 .7rem var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.field{display:grid;gap:8px}
+.label{font:500 .7rem var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.seg{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:3px;gap:3px}
+.seg button{font:inherit;font-size:.88rem;border:0;border-radius:7px;padding:9px 4px;background:transparent;color:var(--ink);cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--panel);font-weight:700}
+select,input[type=time]{font:inherit;width:100%;padding:10px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.btn{font:inherit;font-size:.85rem;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:9px;padding:8px 10px;cursor:pointer}
+.small{font-size:.8rem;color:var(--muted);margin:0}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.distread{display:flex;align-items:baseline;gap:8px}
+.distread b{font:800 2.6rem/1 var(--display);font-variant-numeric:tabular-nums;color:var(--accent)}
+.distread span{color:var(--muted)}
+input[type=range]{width:100%;accent-color:var(--accent);height:30px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font:inherit;font-size:.82rem;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:999px;padding:6px 12px;cursor:pointer}
+.chip[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);font-weight:700}
+.summary{border-top:1px solid var(--line);padding-top:14px;display:grid;gap:10px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat b{display:block;font:700 1.1rem var(--mono);font-variant-numeric:tabular-nums}
+.stat span{font-size:.7rem;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.desc{margin:0;font-size:.92rem}
+.warn{background:var(--warnBg);color:var(--warn);border-radius:9px;padding:9px 11px;font-size:.88rem}
+.stopshead{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;border-top:1px solid var(--line);padding-top:14px}
+.stopshead h2{margin:0;font:800 1.15rem var(--display)}
+ol.list{list-style:none;margin:0;padding:0}
+ol.list li{display:grid;grid-template-columns:54px 12px minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 0;border-top:1px solid var(--line);cursor:pointer}
+ol.list li:first-child{border-top:0}
+.mi{font:.78rem var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.leg{display:block;font-size:.66rem;text-transform:uppercase;letter-spacing:.08em}
+.dot{width:12px;height:12px;border-radius:50%}
+.dot.coffee{background:var(--coffee)}.dot.food{background:var(--food)}
+.nm{font-weight:700}.ad{font-size:.8rem;color:var(--muted)}
+.tm{font:.78rem var(--mono);text-align:right}
+.foot{font-size:.76rem;color:var(--muted);margin:0}
+[hidden]{display:none!important}
+
+/* map overlays */
+.loading{position:absolute;z-index:1000;left:50%;top:14px;transform:translateX(-50%);background:rgba(10,20,16,.85);color:#fff;padding:8px 14px;border-radius:999px;font-size:.85rem}
+.mapwrap{position:relative;min-height:0}
+.pickbar{position:absolute;z-index:1000;left:10px;bottom:24px;background:rgba(10,20,16,.85);color:#fff;border-radius:10px;padding:7px 11px;font-size:.82rem;max-width:calc(100% - 20px)}
+.mm{width:22px;height:22px;border-radius:50%;background:#fff;border:2.5px solid var(--routeEdge);color:var(--routeEdge);font:700 10px/17px var(--mono);text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.5)}
+.pin{width:30px;height:30px;border-radius:50%;border:3px solid #fff;color:#fff;font:700 13px/24px var(--mono);text-align:center;box-shadow:0 2px 6px rgba(0,0,0,.6)}
+.pin.s{background:#0b8f6a}.pin.f{background:#16231d}
+.stopic{width:28px;height:28px;border-radius:50%;border:2.5px solid #fff;display:grid;place-items:center;box-shadow:0 2px 5px rgba(0,0,0,.55)}
+.stopic.coffee{background:#8a5a33}.stopic.food{background:#d8344a}
+.leaflet-popup-content{font:14px/1.4 var(--body);margin:12px 14px}
+.leaflet-popup-content h3{margin:0 0 2px;font:800 1rem var(--display)}
+.leaflet-popup-content p{margin:4px 0 0}
+.youare{width:16px;height:16px;border-radius:50%;background:#2b8cff;border:3px solid #fff;box-shadow:0 0 0 6px rgba(43,140,255,.25)}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="mapwrap">
+    <div id="map" role="application" aria-label="Satellite map of the Boise River Greenbelt"></div>
+    <div class="loading" id="loading">Loading the Greenbelt path…</div>
+    <div class="pickbar" id="pickbar">Tap the path to set your start</div>
+  </div>
+
+  <aside class="side">
+    <h1><small>Boise River Greenbelt</small>Greenbelt Marathon Planner</h1>
+
+    <div class="field">
+      <span class="label">Route type</span>
+      <div class="seg" role="group" aria-label="Route type">
+        <button type="button" data-mode="round" aria-pressed="true">Round trip</button>
+        <button type="button" data-mode="one" aria-pressed="false">One way</button>
+        <button type="button" data-mode="ab" aria-pressed="false">Start → End</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label class="label" for="start">Start</label>
+      <select id="start"></select>
+      <div class="chips">
+        <button type="button" class="btn" id="tapStart">Tap map to set start</button>
+        <button type="button" class="btn" id="locate">Use my location</button>
+      </div>
+    </div>
+
+    <div class="field" id="endField" hidden>
+      <label class="label" for="end">End</label>
+      <select id="end"></select>
+      <button type="button" class="btn" id="tapEnd">Tap map to set end</button>
+    </div>
+
+    <div class="field" id="dirField">
+      <span class="label">Head toward</span>
+      <div class="seg" role="group" aria-label="Direction">
+        <button type="button" data-dir="1" aria-pressed="true">Eagle (west)</button>
+        <button type="button" data-dir="-1" aria-pressed="false">Lucky Peak (east)</button>
+      </div>
+    </div>
+
+    <div class="field" id="distField">
+      <label class="label" for="dist">How far do you want to walk?</label>
+      <div class="distread"><b id="distOut">26.2</b><span>miles total</span></div>
+      <input type="range" id="dist" min="1" max="26.2" step="0.1" value="26.2">
+      <div class="chips" role="group" aria-label="Preset distances">
+        <button type="button" class="chip" data-d="3.1">5K</button>
+        <button type="button" class="chip" data-d="6.2">10K</button>
+        <button type="button" class="chip" data-d="13.1">Half</button>
+        <button type="button" class="chip" data-d="26.2">Marathon</button>
+      </div>
+    </div>
+
+    <div class="row2">
+      <div class="field">
+        <label class="label" for="pace">Pace</label>
+        <select id="pace">
+          <option value="13">13 min/mi</option><option value="15">15 min/mi</option>
+          <option value="16" selected>16 min/mi</option><option value="18">18 min/mi</option><option value="20">20 min/mi</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="label" for="time">Start time</label>
+        <input type="time" id="time" value="07:30">
+      </div>
+    </div>
+
+    <div class="summary" aria-live="polite">
+      <div class="stats">
+        <div class="stat"><b id="sDist">–</b><span>Miles</span></div>
+        <div class="stat"><b id="sTime">–</b><span>Walking</span></div>
+        <div class="stat"><b id="sFinish">–</b><span>Finish</span></div>
+      </div>
+      <p class="desc" id="desc"></p>
+      <div class="warn" id="warn" hidden></div>
+    </div>
+
+    <div class="stopshead">
+      <h2 id="stopsTitle">Stops on your walk</h2>
+      <div class="chips" role="group" aria-label="Filter stops">
+        <button type="button" class="chip" data-f="all" aria-pressed="true">All</button>
+        <button type="button" class="chip" data-f="coffee" aria-pressed="false">Coffee</button>
+        <button type="button" class="chip" data-f="food" aria-pressed="false">Food</button>
+      </div>
+    </div>
+    <ol class="list" id="list"></ol>
+    <p class="foot" id="foot">Path data © OpenStreetMap contributors. Imagery © Esri, Maxar, Earthstar Geographics. Check business hours before you go; they change with the seasons.</p>
+  </aside>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function(){
+// ---------------- data ----------------
+const BBOX=[43.50,-116.40,43.72,-116.02]; // s,w,n,e
+const TRAILHEADS=[
+  ["Discovery Park (Lucky Peak)",43.5300,-116.0580],["Barber Park",43.5680,-116.1310],["Municipal Park",43.6020,-116.1820],
+  ["Julia Davis Park",43.6085,-116.2030],["Ann Morrison Park",43.6125,-116.2150],["Esther Simplot Park",43.6290,-116.2370],
+  ["Veterans Memorial Park",43.6420,-116.2450],["Glenwood Bridge",43.6610,-116.2830],["Eagle Road",43.6800,-116.3540]
+].map(t=>({name:t[0],lat:t[1],lon:t[2]}));
+const STOPS=[
+  {name:"Sid’s Garage Barber Station",type:"food",addr:"3035 E Barber Valley Dr, Boise",note:"Burgers; patio opens onto the Greenbelt.",lat:43.5665,lon:-116.1335},
+  {name:"Barrio",type:"food",addr:"3073 S Bown Way, Boise",note:"Mexican street food at Bown Crossing; patio near the path.",lat:43.5838,lon:-116.1590},
+  {name:"The Ram",type:"food",addr:"709 E Park Blvd, Boise",note:"Brewpub with river views by Boise State.",lat:43.6040,lon:-116.1925},
+  {name:"Cottonwood Grille",type:"food",addr:"913 W River St, Boise",note:"Sit-down restaurant overlooking the river.",lat:43.6135,lon:-116.2050},
+  {name:"Payette Brewing",type:"food",addr:"733 S Pioneer St, Boise",note:"Brewery just off the Greenbelt.",lat:43.6140,lon:-116.2115},
+  {name:"Green Acres Food Truck Park",type:"food",addr:"1401 Shoreline Dr, Boise",note:"Rotating food trucks on the path, across from Ann Morrison Park.",lat:43.6160,lon:-116.2175},
+  {name:"Ling & Louie’s",type:"food",addr:"2288 N Garden St, Boise",note:"Asian fusion; patio overlooks the river.",lat:43.6305,lon:-116.2330},
+  {name:"Grindz Coffee Shop",type:"coffee",addr:"3562 N Prospect Ln, Garden City",note:"Neighborhood coffee by the Whitewater Park.",lat:43.6296,lon:-116.2385},
+  {name:"Caffè Luciano’s",type:"food",addr:"3588 N Prospect Way, Garden City",note:"Italian, next to the Whitewater Park.",lat:43.6304,lon:-116.2398},
+  {name:"Telaya Wine Co.",type:"food",addr:"240 E 32nd St, Garden City",note:"Tasting room with river views and small plates.",lat:43.6395,lon:-116.2410},
+  {name:"Push & Pour",type:"coffee",addr:"214 E 34th St, Garden City",note:"Coffee bar a block off the Greenbelt.",lat:43.6408,lon:-116.2440},
+  {name:"The Boardwalk",type:"food",coffeeToo:true,addr:"521 E 41st St, Garden City",note:"Riverside strip: Bao Boi, Chicken in a Barrel, Tim’s Burgers, Negranti Creamery + Coffee.",lat:43.6475,lon:-116.2555},
+  {name:"Bardenay Eagle",type:"food",addr:"155 E Riverside Dr, Eagle",note:"Restaurant and distillery near Eagle Road.",lat:43.6795,lon:-116.3525}
+];
+// fallback centerline if OpenStreetMap can't be reached
+const FALLBACK=[[43.5300,-116.0580],[43.5370,-116.0700],[43.5430,-116.0810],[43.5480,-116.0930],[43.5530,-116.1040],[43.5580,-116.1150],[43.5630,-116.1230],[43.5680,-116.1310],[43.5730,-116.1400],[43.5790,-116.1490],[43.5850,-116.1580],[43.5900,-116.1660],[43.5950,-116.1740],[43.6020,-116.1820],[43.6050,-116.1950],[43.6085,-116.2030],[43.6100,-116.2070],[43.6125,-116.2150],[43.6170,-116.2230],[43.6230,-116.2290],[43.6290,-116.2370],[43.6350,-116.2410],[43.6420,-116.2450],[43.6470,-116.2560],[43.6510,-116.2650],[43.6560,-116.2740],[43.6610,-116.2830],[43.6650,-116.2950],[43.6690,-116.3080],[43.6720,-116.3200],[43.6750,-116.3330],[43.6780,-116.3450],[43.6800,-116.3540]];
+
+const D2R=Math.PI/180;
+function hav(a1,o1,a2,o2){const p1=a1*D2R,p2=a2*D2R,dp=p2-p1,dl=(o2-o1)*D2R;const x=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2;return 7917.6*Math.asin(Math.sqrt(x));}
+const $=id=>document.getElementById(id);
+const store={get(k){try{return JSON.parse(localStorage.getItem(k)||"null")}catch(e){return null}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+
+// ---------------- map ----------------
+const map=L.map("map",{zoomControl:false,preferCanvas:false}).setView([43.615,-116.21],12);
+L.control.zoom({position:"topright"}).addTo(map);
+const esri=p=>`https://server.arcgisonline.com/ArcGIS/rest/services/${p}/MapServer/tile/{z}/{y}/{x}`;
+const ATTR="Imagery © Esri, Maxar, Earthstar Geographics | Path © OpenStreetMap contributors";
+const satLabels=L.layerGroup([
+  L.tileLayer(esri("World_Imagery"),{maxZoom:19,attribution:ATTR}),
+  L.tileLayer(esri("Reference/World_Transportation"),{maxZoom:19,opacity:.85}),
+  L.tileLayer(esri("Reference/World_Boundaries_and_Places"),{maxZoom:19})
+]).addTo(map);
+const satOnly=L.tileLayer(esri("World_Imagery"),{maxZoom:19,attribution:ATTR});
+const streets=L.tileLayer(esri("World_Street_Map"),{maxZoom:19,attribution:"Tiles © Esri | Path © OpenStreetMap contributors"});
+L.control.layers({"Satellite + labels":satLabels,"Satellite":satOnly,"Streets":streets},null,{position:"topright"}).addTo(map);
+L.control.scale({imperial:true,metric:false,position:"bottomright"}).addTo(map);
+
+const trailLayer=L.layerGroup().addTo(map), routeLayer=L.layerGroup().addTo(map), markLayer=L.layerGroup().addTo(map), stopLayer=L.layerGroup().addTo(map);
+
+// ---------------- graph ----------------
+let G={lat:[],lon:[],adj:[]}; let usingFallback=false;
+function buildGraph(ways){ // ways: [{ids:[], pts:[[lat,lon]]}]
+  const idx=new Map(),lat=[],lon=[],adj=[];
+  const node=(id,p)=>{let i=idx.get(id);if(i===undefined){i=lat.length;idx.set(id,i);lat.push(p[0]);lon.push(p[1]);adj.push([]);}return i;};
+  const link=(a,b)=>{if(a===b)return;if(adj[a].some(e=>e[0]===b))return;const w=hav(lat[a],lon[a],lat[b],lon[b]);adj[a].push([b,w]);adj[b].push([a,w]);};
+  ways.forEach(w=>{let prev=-1;w.ids.forEach((id,k)=>{const i=node(id,w.pts[k]);if(prev>=0)link(prev,i);prev=i;});});
+  // patch small gaps between ways: connect dead-ends to the nearest node within ~40 m
+  const cell=0.0006,grid=new Map(),key=(a,o)=>Math.floor(a/cell)+","+Math.floor(o/cell);
+  for(let i=0;i<lat.length;i++){const k=key(lat[i],lon[i]);(grid.get(k)||grid.set(k,[]).get(k)).push(i);}
+  for(let i=0;i<lat.length;i++){if(adj[i].length>1)continue;
+    const ca=Math.floor(lat[i]/cell),co=Math.floor(lon[i]/cell);let best=-1,bd=0.025;
+    for(let da=-1;da<=1;da++)for(let dO=-1;dO<=1;dO++){(grid.get((ca+da)+","+(co+dO))||[]).forEach(j=>{if(j===i||adj[i].some(e=>e[0]===j))return;
+      const d=hav(lat[i],lon[i],lat[j],lon[j]);if(d<bd){bd=d;best=j;}});}
+    if(best>=0)link(i,best);}
+  G={lat,lon,adj};
+}
+function nearestNode(la,lo){let b=-1,bd=1e9;for(let i=0;i<G.lat.length;i++){const d=(G.lat[i]-la)**2+((G.lon[i]-lo)*0.72)**2;if(d<bd){bd=d;b=i;}}return b;}
+function dijkstra(src){const n=G.lat.length,dist=new Float64Array(n).fill(Infinity),prev=new Int32Array(n).fill(-1);dist[src]=0;
+  const h=[[0,src]];const push=x=>{h.push(x);let i=h.length-1;while(i>0){const p=(i-1)>>1;if(h[p][0]<=h[i][0])break;[h[p],h[i]]=[h[i],h[p]];i=p;}};
+  const pop=()=>{const top=h[0],last=h.pop();if(h.length){h[0]=last;let i=0;for(;;){const l=2*i+1,r=l+1;let m=i;if(l<h.length&&h[l][0]<h[m][0])m=l;if(r<h.length&&h[r][0]<h[m][0])m=r;if(m===i)break;[h[m],h[i]]=[h[i],h[m]];i=m;}}return top;};
+  while(h.length){const [d,u]=pop();if(d>dist[u])continue;for(const [v,w] of G.adj[u]){const nd=d+w;if(nd<dist[v]){dist[v]=nd;prev[v]=u;push([nd,v]);}}}
+  return {dist,prev};}
+function pathTo(prev,t){const out=[];for(let u=t;u!==-1;u=prev[u])out.push(u);return out.reverse();}
+
+// ---------------- state ----------------
+const saved=store.get("gbp2")||{};
+const st=Object.assign({mode:"round",dir:1,dist:26.2,pace:16,time:"07:30",filter:"all",
+  start:{name:"Barber Park",lat:43.5680,lon:-116.1310},end:{name:"Julia Davis Park",lat:43.6085,lon:-116.2030}},saved,{pick:null});
+let R=null; let SP=null; // R: computed route, SP: cached dijkstra for start node
+
+function fillSelect(sel,cur){sel.innerHTML="";TRAILHEADS.forEach((t,i)=>{const o=document.createElement("option");o.value=i;o.textContent=t.name;sel.appendChild(o);});
+  const c=document.createElement("option");c.value="custom";c.textContent="Custom point on the map";c.hidden=true;sel.appendChild(c);
+  const i=TRAILHEADS.findIndex(t=>t.name===cur.name);sel.value=i>=0?String(i):"custom";if(i<0)c.hidden=false;}
+fillSelect($("start"),st.start);fillSelect($("end"),st.end);
+
+function syncUI(){
+  document.querySelectorAll("[data-mode]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.mode===st.mode));
+  document.querySelectorAll("[data-dir]").forEach(b=>b.setAttribute("aria-pressed",+b.dataset.dir===st.dir));
+  document.querySelectorAll("[data-f]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.f===st.filter));
+  const ab=st.mode==="ab";$("endField").hidden=!ab;$("dirField").hidden=ab;$("distField").hidden=ab;
+  $("dist").value=st.dist;$("distOut").textContent=st.dist.toFixed(1);$("pace").value=String(st.pace);$("time").value=st.time;
+  document.querySelectorAll("[data-d]").forEach(c=>c.setAttribute("aria-pressed",Math.abs(+c.dataset.d-st.dist)<0.05));
+  $("pickbar").textContent=st.pick==="end"?"Tap the path to set your end":st.pick==="start"?"Tap the path to set your start":(ab?"Tap the path to move start or end":"Tap the path to move your start");
+}
+
+function fmtDur(min){const h=Math.floor(min/60),m=Math.round(min%60);return h?`${h}h ${String(m).padStart(2,"0")}m`:`${m}m`;}
+function clockAt(min){const [h,m]=(st.time||"07:30").split(":").map(Number);let t=((h*60+m+min)%1440+1440)%1440;const hh=Math.floor(t/60),mm=Math.round(t%60)%60;return `${((hh+11)%12)+1}:${String(mm).padStart(2,"0")} ${hh>=12?"PM":"AM"}`;}
+function placeName(la,lo){let b=null,bd=1e9;TRAILHEADS.forEach(t=>{const d=hav(la,lo,t.lat,t.lon);if(d<bd){bd=d;b=t;}});return bd<0.4?b.name:(bd<1.5?`near ${b.name}`:"a point on the Greenbelt");}
+
+// ---------------- routing ----------------
+let lastStartNode=-1;
+function compute(){if(!G.lat.length)return null;
+  const s=nearestNode(st.start.lat,st.start.lon);
+  if(s!==lastStartNode){SP=dijkstra(s);lastStartNode=s;}
+  const {dist,prev}=SP;let warn="",t,out;
+  if(st.mode==="ab"){t=nearestNode(st.end.lat,st.end.lon);if(!isFinite(dist[t])){warn="Those two points aren’t connected by the Greenbelt path. Move one of them onto the same stretch of path.";return {nodes:[s],out:0,total:0,warn,s,t:s};}out=dist[t];}
+  else{const want=st.mode==="round"?st.dist/2:st.dist;const sc=i=>st.dir*G.lon[i]; // lower is farther in chosen direction
+    const startSc=sc(s);let best=-1,bs=Infinity;
+    for(let i=0;i<dist.length;i++){if(Math.abs(dist[i]-want)<=0.12&&sc(i)<bs){bs=sc(i);best=i;}}
+    const progressMi=best>=0?(startSc-bs)*50:0;
+    if(best<0||progressMi<want*0.3){ // not enough path that way: go to the farthest reachable point in that direction
+      let far=-1,fs=Infinity;for(let i=0;i<dist.length;i++){if(isFinite(dist[i])&&sc(i)<fs){fs=sc(i);far=i;}}
+      best=far;const avail=dist[far];
+      warn=st.mode==="round"
+        ?`Only about ${avail.toFixed(1)} mi of path lies ${st.dir>0?"west":"east"} of your start, so this round trip tops out near ${(avail*2).toFixed(1)} mi. Start farther ${st.dir>0?"east":"west"} or head the other way.`
+        :`The path ends about ${avail.toFixed(1)} mi ${st.dir>0?"west":"east"} of your start. Switch to round trip, start farther ${st.dir>0?"east":"west"}, or flip direction.`;}
+    t=best;out=dist[t];}
+  const nodes=pathTo(prev,t);const cum=[0];for(let k=1;k<nodes.length;k++)cum.push(cum[k-1]+hav(G.lat[nodes[k-1]],G.lon[nodes[k-1]],G.lat[nodes[k]],G.lon[nodes[k]]));
+  const total=st.mode==="round"?out*2:out;
+  return {nodes,cum,out,total,warn,s,t};}
+
+function pointAtMile(m){const n=R.nodes,c=R.cum;for(let k=1;k<n.length;k++){if(c[k]>=m){const f=(m-c[k-1])/((c[k]-c[k-1])||1);
+  return [G.lat[n[k-1]]+f*(G.lat[n[k]]-G.lat[n[k-1]]),G.lon[n[k-1]]+f*(G.lon[n[k]]-G.lon[n[k-1]])];}}return [G.lat[n[n.length-1]],G.lon[n[n.length-1]]];}
+
+function stopsOnWalk(){if(!R||R.nodes.length<2)return [];const out=[];
+  STOPS.forEach(s=>{let bk=-1,bd=0.3;R.nodes.forEach((u,k)=>{const d=hav(s.lat,s.lon,G.lat[u],G.lon[u]);if(d<bd){bd=d;bk=k;}});
+    if(bk<0)return;const w=R.cum[bk];out.push({s,w,leg:st.mode==="round"?"Out":"",off:bd});
+    if(st.mode==="round"&&R.out-w>0.15)out.push({s,w:R.total-w,leg:"Back",off:bd});});
+  return out.sort((a,b)=>a.w-b.w);}
+
+// ---------------- render ----------------
+const icon=(cls,html,size)=>L.divIcon({className:"",html:`<div class="${cls}">${html}</div>`,iconSize:[size,size],iconAnchor:[size/2,size/2]});
+const CUP='<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#fff" stroke-width="1.8"><path d="M2 5h7v4a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3z" fill="#fff"/><path d="M9 6h1.5a1.5 1.5 0 0 1 0 3H9"/></svg>';
+const FORK='<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"><path d="M3 1v4a1.5 1.5 0 0 0 3 0V1M4.5 6v7M10 13V1c-1.5 1-2 3-2 5h2"/></svg>';
+const stopMarkers=new Map();
+
+function popupHtml(s){const on=stopsOnWalk().filter(x=>x.s===s);
+  const when=on.length?"On your walk at "+on.map(x=>`mile ${x.w.toFixed(1)} (${clockAt(x.w*st.pace)})`).join(" and ")+".":"Not on your current walk.";
+  const kind=s.type==="coffee"?"Coffee":(s.coffeeToo?"Food + coffee":"Food");
+  const q=encodeURIComponent(s.name+" "+s.addr);
+  return `<h3>${s.name}</h3><div style="color:#667">${kind} · ${s.addr}</div><p>${s.note}</p><p><b>${when}</b></p><p><a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank" rel="noopener">Directions & hours</a></p>`;}
+
+function drawStops(){stopLayer.clearLayers();stopMarkers.clear();
+  STOPS.forEach(s=>{if(st.filter!=="all"&&s.type!==st.filter&&!(st.filter==="coffee"&&s.coffeeToo))return;
+    const m=L.marker([s.lat,s.lon],{icon:icon("stopic "+s.type,s.type==="coffee"?CUP:FORK,28),title:s.name,zIndexOffset:500}).addTo(stopLayer);
+    m.bindPopup(()=>popupHtml(s));stopMarkers.set(s,m);});}
+
+function render(fit){R=compute();routeLayer.clearLayers();markLayer.clearLayers();
+  if(!R)return;
+  const ll=R.nodes.map(u=>[G.lat[u],G.lon[u]]);
+  if(ll.length>1){L.polyline(ll,{color:"#06372a",weight:10,opacity:.9}).addTo(routeLayer);L.polyline(ll,{color:"#19e3a8",weight:5.5}).addTo(routeLayer);
+    for(let k=1;k<R.out-0.15;k++){const p=pointAtMile(k);L.marker(p,{icon:icon("mm",k,22),interactive:false,zIndexOffset:300}).addTo(markLayer);}}
+  const sP=[G.lat[R.s],G.lon[R.s]],tP=[G.lat[R.t],G.lon[R.t]];
+  L.marker(tP,{icon:icon("pin f",st.mode==="round"?"↺":"F",30),title:st.mode==="round"?"Turnaround":"Finish",zIndexOffset:800}).addTo(markLayer);
+  L.marker(sP,{icon:icon("pin s","S",30),title:"Start",zIndexOffset:900}).addTo(markLayer);
+  // summary
+  $("sDist").textContent=R.total.toFixed(1);const dur=R.total*st.pace;$("sTime").textContent=fmtDur(dur);$("sFinish").textContent=clockAt(dur);
+  const sN=st.start.name||placeName(sP[0],sP[1]),tN=placeName(tP[0],tP[1]);
+  $("desc").innerHTML=st.mode==="round"?`Start at <b>${sN}</b>, walk ${R.out.toFixed(1)} mi and turn around at <b>${tN}</b> around ${clockAt(R.out*st.pace)}, then retrace your steps.`
+    :st.mode==="one"?`Start at <b>${sN}</b> and walk ${R.out.toFixed(1)} mi to finish at <b>${tN}</b>. Plan a ride back.`
+    :`Walk from <b>${sN}</b> to <b>${st.end.name||tN}</b> along the Greenbelt: ${R.out.toFixed(1)} mi.`;
+  $("warn").hidden=!R.warn;$("warn").textContent=R.warn;
+  renderList();
+  if(fit&&ll.length>1)map.fitBounds(L.latLngBounds(ll),{padding:[40,40]});
+  store.set("gbp2",{mode:st.mode,dir:st.dir,dist:st.dist,pace:st.pace,time:st.time,start:st.start,end:st.end,filter:st.filter});}
+
+function renderList(){const ol=$("list");ol.innerHTML="";
+  const items=stopsOnWalk().filter(it=>st.filter==="all"||it.s.type===st.filter||(st.filter==="coffee"&&it.s.coffeeToo));
+  $("stopsTitle").textContent=`Stops on your walk (${items.length})`;
+  if(!items.length){const p=document.createElement("p");p.className="small";p.textContent="No stops of this kind on this stretch. Try a longer walk or a different start.";ol.appendChild(p);return;}
+  items.forEach(it=>{const li=document.createElement("li");li.tabIndex=0;
+    li.innerHTML=`<span class="mi">mi ${it.w.toFixed(1)}${it.leg?`<span class="leg">${it.leg}</span>`:""}</span><span class="dot ${it.s.type}"></span><span><span class="nm"></span><br><span class="ad"></span></span><span class="tm">${clockAt(it.w*st.pace)}</span>`;
+    li.querySelector(".nm").textContent=it.s.name;li.querySelector(".ad").textContent=it.s.addr+(it.off>0.12?" · short detour":"");
+    const go=()=>{map.setView([it.s.lat,it.s.lon],16);const m=stopMarkers.get(it.s);if(m)m.openPopup();if(window.innerWidth<=860)$("map").scrollIntoView({behavior:"smooth"});};
+    li.onclick=go;li.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();go();}};ol.appendChild(li);});}
+
+// ---------------- interaction ----------------
+document.querySelectorAll("[data-mode]").forEach(b=>b.onclick=()=>{st.mode=b.dataset.mode;st.pick=null;syncUI();render(true);});
+document.querySelectorAll("[data-dir]").forEach(b=>b.onclick=()=>{st.dir=+b.dataset.dir;syncUI();render(true);});
+document.querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{st.filter=b.dataset.f;syncUI();drawStops();renderList();});
+document.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{st.dist=+b.dataset.d;syncUI();render(true);});
+$("dist").oninput=e=>{st.dist=+e.target.value;$("distOut").textContent=st.dist.toFixed(1);document.querySelectorAll("[data-d]").forEach(c=>c.setAttribute("aria-pressed",Math.abs(+c.dataset.d-st.dist)<0.05));render(false);};
+$("dist").onchange=()=>render(true);
+$("pace").onchange=e=>{st.pace=+e.target.value;render(false);};
+$("time").oninput=e=>{st.time=e.target.value||"07:30";render(false);};
+$("start").onchange=e=>{if(e.target.value==="custom")return;const t=TRAILHEADS[+e.target.value];st.start={...t};render(true);};
+$("end").onchange=e=>{if(e.target.value==="custom")return;const t=TRAILHEADS[+e.target.value];st.end={...t};render(true);};
+$("tapStart").onclick=()=>{st.pick="start";syncUI();};
+$("tapEnd").onclick=()=>{st.pick="end";syncUI();};
+function setPoint(which,la,lo){const i=nearestNode(la,lo);if(i<0)return;
+  const p={name:"",lat:G.lat[i],lon:G.lon[i]};const th=TRAILHEADS.find(t=>hav(t.lat,t.lon,p.lat,p.lon)<0.15);if(th)p.name=th.name;
+  st[which]=p;const sel=$(which);const ix=th?TRAILHEADS.indexOf(th):-1;sel.querySelector('[value="custom"]').hidden=ix>=0;sel.value=ix>=0?String(ix):"custom";}
+map.on("click",e=>{if(!G.lat.length)return;const i=nearestNode(e.latlng.lat,e.latlng.lng);
+  const px=map.latLngToContainerPoint([G.lat[i],G.lon[i]]).distanceTo(map.latLngToContainerPoint(e.latlng));
+  if(px>40&&!st.pick)return; // ignore taps far from the path
+  let which=st.pick||"start";if(!st.pick&&st.mode==="ab"){const ds=hav(e.latlng.lat,e.latlng.lng,st.start.lat,st.start.lon),de=hav(e.latlng.lat,e.latlng.lng,st.end.lat,st.end.lon);which=de<ds?"end":"start";}
+  setPoint(which,e.latlng.lat,e.latlng.lng);st.pick=(st.pick==="start"&&st.mode==="ab")?"end":null;syncUI();render(false);});
+let youMarker=null;
+$("locate").onclick=()=>{if(!navigator.geolocation){alert("Location isn’t available in this browser.");return;}
+  $("locate").textContent="Finding you…";
+  navigator.geolocation.getCurrentPosition(p=>{$("locate").textContent="Use my location";const la=p.coords.latitude,lo=p.coords.longitude;
+    if(youMarker)youMarker.remove();youMarker=L.marker([la,lo],{icon:icon("youare","",16),interactive:false}).addTo(map);
+    if(la<BBOX[0]||la>BBOX[2]||lo<BBOX[1]||lo>BBOX[3]){alert("You look to be away from the Greenbelt, so I’ve left your start where it was.");return;}
+    setPoint("start",la,lo);render(true);},
+  ()=>{$("locate").textContent="Use my location";alert("Couldn’t get your location. Check that location access is allowed for this page.");},{enableHighAccuracy:true,timeout:10000});};
+
+// ---------------- load path from OpenStreetMap ----------------
+const Q=`[out:json][timeout:30];(way["name"~"greenbelt",i]["highway"](${BBOX.join(",")});relation["name"~"greenbelt",i](${BBOX.join(",")});way(r)["highway"];);out geom;`;
+async function fetchOSM(){const cached=store.get("gbp2_osm");if(cached&&Date.now()-cached.t<14*864e5)return cached.ways;
+  const urls=["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter","https://overpass.private.coffee/api/interpreter"];
+  for(const u of urls){try{const r=await fetch(u,{method:"POST",body:"data="+encodeURIComponent(Q),headers:{"Content-Type":"application/x-www-form-urlencoded"}});
+    if(!r.ok)continue;const j=await r.json();
+    const ways=j.elements.filter(e=>e.type==="way"&&e.geometry&&e.nodes).map(e=>({ids:e.nodes,pts:e.geometry.map(g=>[+g.lat.toFixed(6),+g.lon.toFixed(6)])}));
+    if(ways.length>20){store.set("gbp2_osm",{t:Date.now(),ways});return ways;}}catch(e){}}
+  return null;}
+
+// refine stop pins by geocoding their street addresses (kept only if close to the estimate)
+async function geocodeStops(){const cache=store.get("gbp2_geo")||{};let changed=false;
+  for(const s of STOPS){if(cache[s.addr]){[s.lat,s.lon]=cache[s.addr];continue;}
+    try{const r=await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(s.addr+", Idaho")}&lat=${s.lat}&lon=${s.lon}&limit=1`);const j=await r.json();
+      const f=j.features&&j.features[0];if(f){const [lo,la]=f.geometry.coordinates;if(hav(la,lo,s.lat,s.lon)<1.5){s.lat=la;s.lon=lo;cache[s.addr]=[la,lo];changed=true;}}}catch(e){}}
+  if(changed){store.set("gbp2_geo",cache);drawStops();render(false);}}
+
+(async function init(){syncUI();drawStops();
+  const ways=await fetchOSM();
+  if(ways){buildGraph(ways);
+    ways.forEach(w=>L.polyline(w.pts,{color:"#ffe08a",weight:2.5,opacity:.85,dashArray:"5 6",interactive:false}).addTo(trailLayer));
+    $("loading").hidden=true;}
+  else{usingFallback=true;buildGraph([{ids:FALLBACK.map((_,i)=>i),pts:FALLBACK}]);L.polyline(FALLBACK,{color:"#ffe08a",weight:2.5,dashArray:"5 6"}).addTo(trailLayer);
+    $("loading").textContent="Couldn’t reach OpenStreetMap, showing an approximate path";setTimeout(()=>$("loading").hidden=true,6000);}
+  render(true);
+  geocodeStops();
+})();
+})();
+</script>
+</body>
+</html>
