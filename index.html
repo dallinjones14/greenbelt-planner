@@ -118,6 +118,9 @@ ol.list li{grid-template-columns:54px 14px minmax(0,1fr) auto 30px}
 .here{margin:0;font-size:.9rem;background:var(--tealSoft);border-radius:12px;padding:9px 12px}
 .stopic.planned{box-shadow:0 0 0 3px var(--sun),0 2px 6px rgba(0,0,0,.45)}
 .locbtn{position:absolute;z-index:1000;right:10px;bottom:44px;width:34px;height:34px;border-radius:12px;border:0;background:#fff;box-shadow:0 3px 12px rgba(29,42,68,.22);cursor:pointer;display:grid;place-items:center}
+.extrarow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.extrarow input{width:84px;font:inherit;padding:10px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--panel);color:var(--ink)}
+.addmiles{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.addmiles input{width:80px;font:inherit;padding:9px 11px;border-radius:12px;border:1.5px solid var(--line)}
+.offp{color:var(--teal);font-weight:600}
 .who{justify-self:start;font:600 .82rem var(--body);border:0;border-radius:999px;padding:6px 12px 6px 6px;background:var(--panel);color:var(--ink);cursor:pointer;display:flex;align-items:center;gap:8px;box-shadow:0 1px 4px rgba(29,42,68,.1)}
 .avatar{width:24px;height:24px;border-radius:50%;background:var(--teal);color:#fff;display:grid;place-items:center;font:800 .75rem var(--body)}
 .go{font:800 1.1rem var(--display);border:0;border-radius:16px;padding:15px;background:var(--teal);color:#fff;cursor:pointer;box-shadow:0 4px 14px rgba(15,158,147,.35);display:flex;align-items:center;justify-content:center;gap:10px}
@@ -238,6 +241,12 @@ body{padding-bottom:calc(86px + env(safe-area-inset-bottom,0px))}
       </div>
     </div>
 
+    <div class="field">
+      <label class="label" for="extraMi">Walking to the Greenbelt first?</label>
+      <div class="extrarow"><input type="number" id="extraMi" min="0" max="10" step="0.1" value="0" inputmode="decimal"><span class="small">mi to your start</span><button type="button" class="btn" id="extraLoc">From my location</button></div>
+      <p class="small" id="extraHint">Added to your total and finish time. Round trips count it both ways.</p>
+    </div>
+
     <div class="row2">
       <div class="field">
         <label class="label" for="pace">Pace</label>
@@ -313,6 +322,7 @@ body{padding-bottom:calc(86px + env(safe-area-inset-bottom,0px))}
   </button>
   <div class="daydetail" id="dayDetail" hidden>
     <div class="week" id="week"></div>
+    <form class="addmiles" id="addMiles"><span class="label">Walked somewhere else?</span><input type="number" id="addMi" min="0.1" max="30" step="0.1" placeholder="1.5" inputmode="decimal" aria-label="Miles to add"><span class="small">mi</span><button type="submit" class="btn">Add to today</button></form>
     <ol class="trips" id="trips"></ol>
   </div>
 </div>
@@ -408,7 +418,7 @@ function pathTo(prev,t){const out=[];for(let u=t;u!==-1;u=prev[u])out.push(u);re
 
 // ---------------- state ----------------
 const saved=store.get("gbp2")||{};
-const st=Object.assign({mode:"round",dir:1,dist:26.2,pace:16,time:"07:30",filter:"all",
+const st=Object.assign({extra:0,mode:"round",dir:1,dist:26.2,pace:16,time:"07:30",filter:"all",
   start:{name:"Barber Park",lat:43.5680,lon:-116.1310},end:{name:"Julia Davis Park",lat:43.6085,lon:-116.2030},planned:{}},saved,{pick:null});
 const keyOf=s=>s.name+"|"+s.addr;
 const DEFAULT_BREAK={coffee:15,food:30,store:5};
@@ -424,7 +434,8 @@ function fillSelect(sel,cur){sel.innerHTML="";TRAILHEADS.forEach((t,i)=>{const o
   const i=TRAILHEADS.findIndex(t=>t.name===cur.name);sel.value=i>=0?String(i):"custom";if(i<0)c.hidden=false;}
 fillSelect($("start"),st.start);fillSelect($("end"),st.end);
 
-function syncUI(){
+function extraTotal(){const e=Math.max(0,+st.extra||0);return st.mode==="round"?e*2:e;}
+function syncUI(){$("extraMi").value=st.extra||0;
   document.querySelectorAll("[data-mode]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.mode===st.mode));
   document.querySelectorAll("[data-dir]").forEach(b=>b.setAttribute("aria-pressed",+b.dataset.dir===st.dir));
   document.querySelectorAll("[data-f]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.f===st.filter));
@@ -519,13 +530,18 @@ async function fetchSpur(s,n){const k=spurKey(s,n);if(SPUR.has(k)||spurPending.h
     if(j.code==="Ok"&&rt&&rt.distance/1609.34<1.5){SPUR.set(k,{mi:rt.distance/1609.34,pts:[[G.lat[n],G.lon[n]],...rt.geometry.coordinates.map(c=>[c[1],c[0]]),[s.lat,s.lon]]});render(false);}}
   catch(e){}finally{spurPending.delete(k);}}
 
+function offPath(s){if(!G.lat.length)return null;if(s._nn==null)s._nn=nearestNode(s.lat,s.lon);const n=s._nn;
+  const v=SPUR.get(spurKey(s,n));const mi=v?v.mi:hav(G.lat[n],G.lon[n],s.lat,s.lon)*1.25;return {mi,exact:!!v,n};}
+function offText(s){const o=offPath(s);if(!o)return "";if(o.mi<0.04)return "Right on the Greenbelt";
+  return `${o.exact?"":"≈ "}${o.mi<0.1?"under 0.1":o.mi.toFixed(1)} mi from the Greenbelt`;}
+
 // planned breaks along the walk: each planned stop counted once (round trip: on the leg you pick)
 function plannedVisits(){const on=stopsOnWalk(),out=[];
   STOPS.filter(isPlanned).forEach(s=>{const p=st.planned[keyOf(s)];const hits=on.filter(x=>x.s===s);
     const hit=hits.find(x=>!x.leg||x.leg===p.leg)||hits[0];
     out.push(hit?{s,p,w:hit.w,leg:hit.leg,node:hit.node,detour:hit.off>0.02?spurMiles(s,hit.node)*2:0}:{s,p,w:null});});
   return out.sort((a,b)=>(a.w??1e9)-(b.w??1e9));}
-function timeAt(w,visits){let extra=0;(visits||plannedVisits()).forEach(v=>{if(v.w!=null&&v.w<w-0.01)extra+=v.p.brk+v.detour*st.pace;});return w*st.pace+extra;}
+function timeAt(w,visits){let extra=(+st.extra||0)*st.pace;(visits||plannedVisits()).forEach(v=>{if(v.w!=null&&v.w<w-0.01)extra+=v.p.brk+v.detour*st.pace;});return w*st.pace+extra;}
 
 // ---------------- render ----------------
 const icon=(cls,html,size)=>L.divIcon({className:"",html:`<div class="${cls}">${html}</div>`,iconSize:[size,size],iconAnchor:[size/2,size/2]});
@@ -539,8 +555,8 @@ function popupHtml(s){const on=stopsOnWalk().filter(x=>x.s===s);
   const when=on.length?"On your walk at "+on.map(x=>`mile ${x.w.toFixed(1)} (${clockAt(timeAt(x.w))})`).join(" and ")+".":"Not on your current walk.";
   const kind=s.type==="store"?(s.fuel?"Gas station store":"Convenience store"):s.type==="coffee"?"Coffee":(s.coffeeToo?"Food + coffee":"Food");
   const q=encodeURIComponent(s.name+" "+s.addr);
-  return `<h3>${s.name}</h3><div style="color:#667">${kind} · ${s.addr}</div><p>${s.note}</p><p><b>${when}</b></p><p><a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank" rel="noopener">Directions & hours</a></p><button type="button" class="addbtn${isPlanned(s)?" on":""}" data-key="${encodeURIComponent(keyOf(s))}">${isPlanned(s)?"✓ On my walk · remove":"+ Add to my walk"}</button>`;}
-map.on("popupopen",e=>{const b=e.popup.getElement().querySelector(".addbtn");if(!b)return;
+  return `<h3>${s.name}</h3><div style="color:#667">${kind} · ${s.addr}</div><p class="offp">${offText(s)}</p><p>${s.note}</p><p><b>${when}</b></p><p><a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank" rel="noopener">Directions & hours</a></p><button type="button" class="addbtn${isPlanned(s)?" on":""}" data-key="${encodeURIComponent(keyOf(s))}">${isPlanned(s)?"✓ On my walk · remove":"+ Add to my walk"}</button>`;}
+map.on("popupopen",e=>{const sx=STOPS.find(x=>stopMarkers.get(x)&&stopMarkers.get(x).getPopup()===e.popup);if(sx){const o=offPath(sx);if(o&&!o.exact&&o.mi>=0.04)fetchSpur(sx,o.n);}const b=e.popup.getElement().querySelector(".addbtn");if(!b)return;
   b.onclick=()=>{const s=STOPS.find(x=>encodeURIComponent(keyOf(x))===b.dataset.key);if(!s)return;togglePlan(s);
     const m=stopMarkers.get(s);if(m){m.openPopup();}};});
 
@@ -562,7 +578,7 @@ function render(fit){R=compute();routeLayer.clearLayers();markLayer.clearLayers(
   L.marker(sP,{icon:pinIcon("s","S"),title:"Start",zIndexOffset:900}).addTo(markLayer);
   // summary
   const visits=plannedVisits();const detour=visits.reduce((a,v)=>a+(v.w!=null?v.detour:0),0),brk=visits.reduce((a,v)=>a+(v.w!=null?v.p.brk:0),0);
-  const miles=R.total+detour,dur=miles*st.pace+brk;
+  const miles=R.total+detour+extraTotal(),dur=miles*st.pace+brk;
   $("sDist").textContent=miles.toFixed(1);$("sTime").textContent=fmtDur(dur);$("sFinish").textContent=clockAt(dur);
   renderPlan(visits,brk);
   const sN=st.start.name||placeName(sP[0],sP[1]),tN=placeName(tP[0],tP[1]);
@@ -573,7 +589,7 @@ function render(fit){R=compute();routeLayer.clearLayers();markLayer.clearLayers(
   $("warn").hidden=!R.warn;$("warn").textContent=R.warn;
   renderList(visits);updateHere();
   if(fit&&ll.length>1)map.fitBounds(L.latLngBounds(ll),{padding:[40,40]});
-  store.set("gbp2",{mode:st.mode,dir:st.dir,dist:st.dist,pace:st.pace,time:st.time,start:st.start,end:st.end,filter:st.filter,planned:st.planned});}
+  store.set("gbp2",{extra:st.extra,mode:st.mode,dir:st.dir,dist:st.dist,pace:st.pace,time:st.time,start:st.start,end:st.end,filter:st.filter,planned:st.planned});}
 
 function renderPlan(visits,brk){const ol=$("plan");ol.innerHTML="";$("planEmpty").hidden=visits.length>0;
   $("planTitle").textContent=visits.length?`My stops (${visits.length})`:"My stops";
@@ -595,7 +611,7 @@ function renderList(visits){const ol=$("list");ol.innerHTML="";
   items.forEach(it=>{const li=document.createElement("li");li.tabIndex=0;
     li.innerHTML=`<span class="mi">mi ${it.w.toFixed(1)}${it.leg?`<span class="leg">${it.leg}</span>`:""}</span><span class="dot ${it.s.type}"></span><span><span class="nm"></span><br><span class="ad"></span></span><span class="tm">${clockAt(timeAt(it.w,visits))}</span><button type="button" class="plus${isPlanned(it.s)?" on":""}" aria-label="${isPlanned(it.s)?"Remove from":"Add to"} my walk">${isPlanned(it.s)?"✓":"+"}</button>`;
     li.querySelector(".plus").onclick=e=>{e.stopPropagation();togglePlan(it.s);};
-    li.querySelector(".nm").textContent=it.s.name;li.querySelector(".ad").textContent=it.s.addr+(it.off>0.12?" · short detour":"");
+    li.querySelector(".nm").textContent=it.s.name;li.querySelector(".ad").textContent=it.s.addr+" · "+offText(it.s);
     const go=()=>{map.setView([it.s.lat,it.s.lon],16);const m=stopMarkers.get(it.s);if(m)m.openPopup();if(window.innerWidth<=860)$("map").scrollIntoView({behavior:"smooth"});};
     li.onclick=go;li.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();go();}};ol.appendChild(li);});}
 
@@ -606,6 +622,12 @@ document.querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{st.filter=b.data
 document.querySelectorAll("[data-d]").forEach(b=>b.onclick=()=>{st.dist=+b.dataset.d;syncUI();render(true);});
 $("dist").oninput=e=>{st.dist=+e.target.value;$("distOut").textContent=st.dist.toFixed(1);document.querySelectorAll("[data-d]").forEach(c=>c.setAttribute("aria-pressed",Math.abs(+c.dataset.d-st.dist)<0.05));render(false);};
 $("dist").onchange=()=>render(true);
+$("extraMi").oninput=e=>{st.extra=Math.max(0,Math.min(10,+e.target.value||0));render(false);};
+$("extraLoc").onclick=async()=>{const b=$("extraLoc");if(!me){b.textContent="Waiting for location…";startWatch();setTimeout(()=>b.textContent="From my location",4000);return;}
+  if(!R)return;const n=R.s;b.textContent="Measuring…";let mi=hav(me.lat,me.lon,G.lat[n],G.lon[n])*1.25;
+  try{const j=await (await fetch(`https://routing.openstreetmap.de/routed-foot/route/v1/driving/${me.lon},${me.lat};${G.lon[n]},${G.lat[n]}?overview=false`)).json();if(j.code==="Ok")mi=j.routes[0].distance/1609.34;}catch(e){}
+  b.textContent="From my location";if(mi>10){$("extraHint").textContent="You’re more than 10 miles from your start, so nothing was added.";return;}
+  st.extra=Math.round(mi*10)/10;$("extraMi").value=st.extra;$("extraHint").textContent=`About ${st.extra} mi walking from where you are to your start. Round trips count it both ways.`;render(false);};
 $("pace").onchange=e=>{st.pace=+e.target.value;render(false);};
 $("time").oninput=e=>{st.time=e.target.value||"07:30";render(false);};
 $("start").onchange=e=>{if(e.target.value==="custom")return;const t=TRAILHEADS[+e.target.value];st.start={...t};render(true);};
@@ -707,7 +729,7 @@ function updateDay(){const t=getTrips(),today=dayKey(Date.now());
   if(!todays.length&&!active){ol.innerHTML='<li>No walks yet today. Tap <b style="font:inherit;font-weight:700">Start walk</b> when you head out.</li>';return;}
   if(active){const li=document.createElement("li");li.innerHTML=`<b>${active.miles.toFixed(2)} mi</b><span class="t">In progress · started ${new Date(active.start).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})}</span>`;ol.appendChild(li);}
   todays.slice().reverse().forEach(x=>{const li=document.createElement("li");
-    li.innerHTML=`<b>${x.miles.toFixed(2)} mi</b><span class="t">${new Date(x.start).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})} · ${fmtClock(x.ms)}</span><button type="button" aria-label="Delete this walk">×</button>`;
+    li.innerHTML=`<b>${x.miles.toFixed(2)} mi</b><span class="t">${new Date(x.start).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})} · ${x.manual?"added by hand":fmtClock(x.ms)}</span><button type="button" aria-label="Delete this walk">×</button>`;
     li.querySelector("button").onclick=()=>{if(!confirm("Delete this walk from today’s miles?"))return;store.set(tripsKey(),getTrips().filter(y=>y.id!==x.id));updateDay();};
     ol.appendChild(li);});}
 
@@ -727,6 +749,8 @@ $("whoSheet").addEventListener("click",e=>{if(e.target.id==="whoSheet")closeWho(
 $("addWalker").addEventListener("submit",e=>{e.preventDefault();const f=$("newFirst").value.trim(),l=$("newLast").value.trim();if(!f||!l)return;
   const name=f+" "+l;const dup=walkers.find(w=>w.name.toLowerCase()===name.toLowerCase());if(dup){selectWalker(dup.id);return;}
   const w={id:"w"+Date.now().toString(36),name};walkers.push(w);store.set("gbp2_users",walkers);$("newFirst").value="";$("newLast").value="";selectWalker(w.id);});
+$("addMiles").addEventListener("submit",e=>{e.preventDefault();const m=+$("addMi").value;if(!(m>0)||m>30)return;
+  if(!cur){openWho();return;}const t=getTrips();t.push({id:Date.now(),start:Date.now(),end:Date.now(),miles:+m.toFixed(2),ms:0,manual:true});store.set(tripsKey(),t);$("addMi").value="";updateDay();});
 $("goBtn").onclick=startTrip;$("pauseBtn").onclick=togglePause;$("finishBtn").onclick=finishTrip;
 $("resetBtn").onclick=()=>{if(!active||!confirm("Reset this walk’s miles and time to zero and keep tracking?"))return;
   Object.assign(active,{start:Date.now(),miles:0,ms:0,resumedAt:Date.now(),paused:false,last:null});store.set(activeKey(),active);keepAwake(true);showLive();updateDay();};
