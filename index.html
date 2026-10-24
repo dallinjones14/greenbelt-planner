@@ -121,6 +121,9 @@ ol.list li{grid-template-columns:54px 14px minmax(0,1fr) auto 30px}
 .extrarow{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.extrarow input{width:84px;font:inherit;padding:10px 12px;border-radius:12px;border:1.5px solid var(--line);background:var(--panel);color:var(--ink)}
 .addmiles{display:flex;flex-wrap:wrap;align-items:center;gap:8px}.addmiles input{width:80px;font:inherit;padding:9px 11px;border-radius:12px;border:1.5px solid var(--line)}
 .offp{color:var(--teal);font-weight:600}
+.collapse{display:flex;align-items:center;gap:8px;border:0;background:transparent;color:var(--ink);padding:4px 0;cursor:pointer;font:inherit}
+.chev2{color:var(--muted);transition:transform .2s}
+.collapse[aria-expanded="false"] .chev2{transform:rotate(-90deg)}
 .who{justify-self:start;font:600 .82rem var(--body);border:0;border-radius:999px;padding:6px 12px 6px 6px;background:var(--panel);color:var(--ink);cursor:pointer;display:flex;align-items:center;gap:8px;box-shadow:0 1px 4px rgba(29,42,68,.1)}
 .avatar{width:24px;height:24px;border-radius:50%;background:var(--teal);color:#fff;display:grid;place-items:center;font:800 .75rem var(--body)}
 .go{font:800 1.1rem var(--display);border:0;border-radius:16px;padding:15px;background:var(--teal);color:#fff;cursor:pointer;box-shadow:0 4px 14px rgba(15,158,147,.35);display:flex;align-items:center;justify-content:center;gap:10px}
@@ -299,15 +302,15 @@ body{padding-bottom:calc(86px + env(safe-area-inset-bottom,0px))}
 
     <section class="card">
     <div class="stopshead">
-      <h2 id="stopsTitle">Stops on your walk</h2>
-      <div class="chips" role="group" aria-label="Filter stops">
+      <button type="button" class="collapse" id="stopsToggle" aria-expanded="true" aria-controls="stopsBody"><h2 id="stopsTitle">Stops on your walk</h2><svg class="chev2" width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7l5 5 5-5"/></svg></button>
+      <div class="chips" role="group" aria-label="Filter stops" id="stopsFilters">
         <button type="button" class="chip" data-f="all" aria-pressed="true">All</button>
         <button type="button" class="chip" data-f="coffee" aria-pressed="false">Coffee</button>
         <button type="button" class="chip" data-f="food" aria-pressed="false">Food</button>
         <button type="button" class="chip" data-f="store" aria-pressed="false">Stores</button>
       </div>
     </div>
-    <ol class="list" id="list"></ol>
+    <div id="stopsBody"><ol class="list" id="list"></ol></div>
     </section>
     <p class="foot" id="foot">Path data © OpenStreetMap contributors. Imagery © Esri, Maxar, Earthstar Geographics. Check business hours before you go; they change with the seasons.</p>
   </aside>
@@ -752,6 +755,9 @@ $("addWalker").addEventListener("submit",e=>{e.preventDefault();const f=$("newFi
   const w={id:"w"+Date.now().toString(36),name};walkers.push(w);store.set("gbp2_users",walkers);$("newFirst").value="";$("newLast").value="";selectWalker(w.id);});
 $("addMiles").addEventListener("submit",e=>{e.preventDefault();const m=+$("addMi").value;if(!(m>0)||m>30)return;
   if(!cur){openWho();return;}const t=getTrips();t.push({id:Date.now(),start:Date.now(),end:Date.now(),miles:+m.toFixed(2),ms:0,manual:true});store.set(tripsKey(),t);$("addMi").value="";updateDay();});
+function setStopsOpen(open){$("stopsToggle").setAttribute("aria-expanded",open);$("stopsBody").hidden=!open;$("stopsFilters").hidden=!open;store.set("gbp2_stopsOpen",open);}
+$("stopsToggle").onclick=()=>setStopsOpen($("stopsBody").hidden);
+setStopsOpen(store.get("gbp2_stopsOpen")!==false);
 $("goBtn").onclick=startTrip;$("pauseBtn").onclick=togglePause;$("finishBtn").onclick=finishTrip;
 $("resetBtn").onclick=()=>{if(!active||!confirm("Reset this walk’s miles and time to zero and keep tracking?"))return;
   Object.assign(active,{start:Date.now(),miles:0,ms:0,resumedAt:Date.now(),paused:false,last:null});store.set(activeKey(),active);keepAwake(true);showLive();updateDay();};
