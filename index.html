@@ -420,11 +420,12 @@ function pathTo(prev,t){const out=[];for(let u=t;u!==-1;u=prev[u])out.push(u);re
 const saved=store.get("gbp2")||{};
 const st=Object.assign({extra:0,mode:"round",dir:1,dist:26.2,pace:16,time:"07:30",filter:"all",
   start:{name:"Barber Park",lat:43.5680,lon:-116.1310},end:{name:"Julia Davis Park",lat:43.6085,lon:-116.2030},planned:{}},saved,{pick:null});
-const keyOf=s=>s.name+"|"+s.addr;
+const keyOf=s=>s.key||(s.name+"|"+s.addr); // stores use their unique OpenStreetMap id
 const DEFAULT_BREAK={coffee:15,food:30,store:5};
 const isPlanned=s=>!!st.planned[keyOf(s)];
 function togglePlan(s){const k=keyOf(s);if(st.planned[k])delete st.planned[k];else st.planned[k]={brk:DEFAULT_BREAK[s.type]||15,leg:"Out"};
   drawStops();render(st.mode==="ab");}
+Object.keys(st.planned||{}).forEach(k=>{if(k.endsWith("|Address not listed"))delete st.planned[k];});
 let me=null; // latest location fix
 document.addEventListener("click",e=>{if(e.target&&e.target.id==="planClear"){if(!confirm("Remove all planned stops from your walk?"))return;st.planned={};drawStops();render(true);}});
 let R=null; let SP=null; // R: computed route, SP: cached dijkstra for start node
@@ -774,7 +775,7 @@ async function fetchOSM(){const cached=store.get("gbp2_osm");if(cached&&Date.now
 
 // convenience stores and gas-station stores within ~1/3 mile of the path, live from OpenStreetMap
 async function loadStores(){
-  let list=null;const cached=store.get("gbp2_stores");
+  let list=null;const cached=store.get("gbp2_stores2");
   if(cached&&Date.now()-cached.t<7*864e5)list=cached.list;
   else{const q=`[out:json][timeout:25];(nwr["shop"="convenience"](${BBOX.join(",")});nwr["amenity"="fuel"]["shop"!="no"](${BBOX.join(",")}););out center tags;`;
     for(const u of ["https://overpass-api.de/api/interpreter","https://overpass.kumi.systems/api/interpreter","https://overpass.private.coffee/api/interpreter"]){
@@ -782,12 +783,12 @@ async function loadStores(){
         const j=await r.json();list=j.elements.map(e=>{const t=e.tags||{},la=e.lat??(e.center&&e.center.lat),lo=e.lon??(e.center&&e.center.lon);
           const fuel=t.amenity==="fuel";const name=t.name||t.brand||(fuel?"Gas station":"Convenience store");
           const addr=[t["addr:housenumber"],t["addr:street"]].filter(Boolean).join(" ")+(t["addr:city"]?", "+t["addr:city"]:"");
-          return {name,lat:la,lon:lo,fuel,addr:addr||"Address not listed",hours:t.opening_hours||""};}).filter(x=>x.lat!=null);
-        store.set("gbp2_stores",{t:Date.now(),list});break;}catch(e){}}}
+          return {id:e.type+"/"+e.id,name,lat:la,lon:lo,fuel,addr:addr||"Address not listed",hours:t.opening_hours||""};}).filter(x=>x.lat!=null);
+        store.set("gbp2_stores2",{t:Date.now(),list});break;}catch(e){}}}
   if(!list||!G.lat.length)return;
   const cell=0.005,grid=new Map();for(let i=0;i<G.lat.length;i++){const k=Math.floor(G.lat[i]/cell)+","+Math.floor(G.lon[i]/cell);if(!grid.has(k))grid.set(k,[]);grid.get(k).push(i);}
   const near=(la,lo)=>{const a=Math.floor(la/cell),o=Math.floor(lo/cell);let bd=9;for(let x=-1;x<=1;x++)for(let y=-1;y<=1;y++)(grid.get((a+x)+","+(o+y))||[]).forEach(i=>{const d=hav(la,lo,G.lat[i],G.lon[i]);if(d<bd)bd=d;});return bd;};
-  list.filter(x=>near(x.lat,x.lon)<=0.33).forEach(x=>STOPS.push({name:x.name,type:"store",fuel:x.fuel,addr:x.addr,lat:x.lat,lon:x.lon,
+  list.filter(x=>near(x.lat,x.lon)<=0.33).forEach(x=>STOPS.push({key:"osm:"+(x.id||x.lat.toFixed(5)+","+x.lon.toFixed(5)),name:x.name,type:"store",fuel:x.fuel,addr:x.addr,lat:x.lat,lon:x.lon,
     note:(x.fuel?"Gas station with a convenience store. ":"Convenience store. ")+(x.hours?"Listed hours: "+x.hours+".":"Hours not listed; check before you go.")}));
   drawStops();render(false);}
 
