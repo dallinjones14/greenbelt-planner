@@ -135,7 +135,7 @@ ol.list li{grid-template-columns:54px 14px minmax(0,1fr) auto 30px}
 .bar i{display:block;height:100%;background:var(--sun);border-radius:99px;width:0;transition:width .4s}
 .live .btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .live .btns button{font:700 .9rem var(--body);border:0;border-radius:12px;padding:11px;cursor:pointer}
-.pausebtn{background:rgba(255,255,255,.14);color:#fff}.finishbtn{background:var(--sun);color:var(--ink)}
+.pausebtn{background:rgba(255,255,255,.14);color:#fff}.ghostbtn{background:transparent;color:#fff;border:1.5px solid rgba(255,255,255,.25)!important}.ghostbtn.danger{color:#ffb1a8}.finishbtn{background:var(--sun);color:var(--ink)}
 .live .gpsnote{font-size:.75rem;opacity:.7;margin:0}
 .sheet{position:fixed;inset:0;z-index:3000;background:rgba(29,42,68,.35);display:grid;align-items:end;justify-items:center;padding:16px;padding-bottom:max(16px,env(safe-area-inset-bottom,0px))}
 .sheet .card{width:min(440px,100%)}
@@ -271,13 +271,19 @@ body{padding-bottom:calc(86px + env(safe-area-inset-bottom,0px))}
           <div><b id="lPace">–</b><span>Min / mile</span></div>
         </div>
         <div class="bar"><i id="lBar"></i></div>
-        <div class="btns"><button type="button" class="pausebtn" id="pauseBtn">Pause</button><button type="button" class="finishbtn" id="finishBtn">Finish walk</button></div>
+        <div class="btns">
+          <button type="button" class="pausebtn" id="pauseBtn">Pause</button>
+          <button type="button" class="finishbtn" id="finishBtn">Stop &amp; save</button>
+          <button type="button" class="ghostbtn" id="resetBtn">Reset to 0</button>
+          <button type="button" class="ghostbtn danger" id="deleteBtn">Delete walk</button>
+        </div>
         <p class="gpsnote">Keep this page open with the screen on; phones pause GPS for web pages in the background.</p>
       </div>
     </section>
 
     <section class="card">
       <div class="cardhead"><h2 id="planTitle">My stops</h2><span class="small" id="planBreaks"></span></div>
+      <button type="button" class="btn" id="planClear" hidden>Remove all stops</button>
       <p class="small" id="planEmpty">Tap <b>+</b> on any stop in the list, or <b>Add to my walk</b> on a map pin, to plan a coffee, meal or snack break. Break time is added to your finish time.</p>
       <ol class="plan" id="plan"></ol>
     </section>
@@ -410,6 +416,7 @@ const isPlanned=s=>!!st.planned[keyOf(s)];
 function togglePlan(s){const k=keyOf(s);if(st.planned[k])delete st.planned[k];else st.planned[k]={brk:DEFAULT_BREAK[s.type]||15,leg:"Out"};
   drawStops();render(st.mode==="ab");}
 let me=null; // latest location fix
+document.addEventListener("click",e=>{if(e.target&&e.target.id==="planClear"){if(!confirm("Remove all planned stops from your walk?"))return;st.planned={};drawStops();render(true);}});
 let R=null; let SP=null; // R: computed route, SP: cached dijkstra for start node
 
 function fillSelect(sel,cur){sel.innerHTML="";TRAILHEADS.forEach((t,i)=>{const o=document.createElement("option");o.value=i;o.textContent=t.name;sel.appendChild(o);});
@@ -498,14 +505,25 @@ function stopsOnWalk(){if(!R||R.nodes.length<2)return [];const out=[];
     const passes=[];let run=null;
     for(let k=0;k<d.length;k++){if(d[k]<=best+0.03){if(!run||k>run.end+3){run={k,end:k,d:d[k]};passes.push(run);}else{run.end=k;if(d[k]<run.d){run.d=d[k];run.k=k;}}}}
     const pick=st.mode==="round"&&passes.length>1?[passes[0],passes[passes.length-1]]:[passes[0]];
-    pick.forEach((p,i)=>out.push({s:x,w:R.cum[p.k],leg:st.mode==="round"?(i===0?"Out":"Back"):"",off:best}));});
+    pick.forEach((p,i)=>out.push({s:x,w:R.cum[p.k],node:R.nodes[p.k],leg:st.mode==="round"?(i===0?"Out":"Back"):"",off:best}));});
   return out.sort((a,b)=>a.w-b.w);}
+
+// side trip from the Greenbelt to a stop: real walking directions (OSRM foot routing), straight line until they load
+const SPUR=new Map(),spurPending=new Set();
+const spurKey=(s,n)=>keyOf(s)+"|"+G.lat[n].toFixed(5)+","+G.lon[n].toFixed(5);
+function spurMiles(s,n){const v=SPUR.get(spurKey(s,n));if(v)return v.mi;fetchSpur(s,n);return hav(G.lat[n],G.lon[n],s.lat,s.lon)*1.25;}
+function spurPts(s,n){const v=SPUR.get(spurKey(s,n));return v?v.pts:[[G.lat[n],G.lon[n]],[s.lat,s.lon]];}
+async function fetchSpur(s,n){const k=spurKey(s,n);if(SPUR.has(k)||spurPending.has(k))return;spurPending.add(k);
+  try{const u=`https://routing.openstreetmap.de/routed-foot/route/v1/driving/${G.lon[n]},${G.lat[n]};${s.lon},${s.lat}?overview=full&geometries=geojson`;
+    const j=await (await fetch(u)).json();const rt=j.routes&&j.routes[0];
+    if(j.code==="Ok"&&rt&&rt.distance/1609.34<1.5){SPUR.set(k,{mi:rt.distance/1609.34,pts:[[G.lat[n],G.lon[n]],...rt.geometry.coordinates.map(c=>[c[1],c[0]]),[s.lat,s.lon]]});render(false);}}
+  catch(e){}finally{spurPending.delete(k);}}
 
 // planned breaks along the walk: each planned stop counted once (round trip: on the leg you pick)
 function plannedVisits(){const on=stopsOnWalk(),out=[];
   STOPS.filter(isPlanned).forEach(s=>{const p=st.planned[keyOf(s)];const hits=on.filter(x=>x.s===s);
     const hit=hits.find(x=>!x.leg||x.leg===p.leg)||hits[0];
-    out.push(hit?{s,p,w:hit.w,leg:hit.leg,detour:hit.off>0.05?hit.off*2:0}:{s,p,w:null});});
+    out.push(hit?{s,p,w:hit.w,leg:hit.leg,node:hit.node,detour:hit.off>0.02?spurMiles(s,hit.node)*2:0}:{s,p,w:null});});
   return out.sort((a,b)=>(a.w??1e9)-(b.w??1e9));}
 function timeAt(w,visits){let extra=0;(visits||plannedVisits()).forEach(v=>{if(v.w!=null&&v.w<w-0.01)extra+=v.p.brk+v.detour*st.pace;});return w*st.pace+extra;}
 
@@ -534,6 +552,9 @@ function drawStops(){stopLayer.clearLayers();stopMarkers.clear();
 function render(fit){R=compute();routeLayer.clearLayers();markLayer.clearLayers();
   if(!R)return;
   const ll=R.nodes.map(u=>[G.lat[u],G.lon[u]]);
+  plannedVisits().forEach(v=>{if(v.w==null||!v.detour)return;const pts=spurPts(v.s,v.node);
+    L.polyline(pts,{color:"#1d2a44",weight:9,opacity:.5}).addTo(routeLayer);L.polyline(pts,{color:"#ffffff",weight:6.5}).addTo(routeLayer);
+    L.polyline(pts,{color:"#ffc93c",weight:4,dashArray:"1 8",lineCap:"round"}).addTo(routeLayer);});
   if(ll.length>1){L.polyline(ll,{color:"#1d2a44",weight:11,opacity:.55}).addTo(routeLayer);L.polyline(ll,{color:"#ffffff",weight:8.5}).addTo(routeLayer);L.polyline(ll,{color:"#ffc93c",weight:5.5}).addTo(routeLayer);
     for(let k=1;k<R.out-0.15;k++){const p=pointAtMile(k);L.marker(p,{icon:icon("mm",k,22),interactive:false,zIndexOffset:300}).addTo(markLayer);}}
   const sP=[G.lat[R.s],G.lon[R.s]],tP=[G.lat[R.t],G.lon[R.t]];
@@ -556,7 +577,7 @@ function render(fit){R=compute();routeLayer.clearLayers();markLayer.clearLayers(
 
 function renderPlan(visits,brk){const ol=$("plan");ol.innerHTML="";$("planEmpty").hidden=visits.length>0;
   $("planTitle").textContent=visits.length?`My stops (${visits.length})`:"My stops";
-  $("planBreaks").textContent=brk?`${fmtDur(brk)} of breaks`:"";
+  $("planBreaks").textContent=brk?`${fmtDur(brk)} of breaks`:"";$("planClear").hidden=!visits.length;
   visits.forEach(v=>{const li=document.createElement("li");
     li.innerHTML=`<span class="dot ${v.s.type}"></span><span><span class="nm"></span><br>${v.w!=null?`<span class="when">mile ${v.w.toFixed(1)}${v.leg?" · "+v.leg.toLowerCase():""} · arrive ${clockAt(timeAt(v.w,visits))}</span>`:`<span class="off">Can’t be reached along the Greenbelt from this start.</span>`}</span><button type="button" class="x" aria-label="Remove">×</button><div class="opts"></div>`;
     li.querySelector(".nm").textContent=v.s.name;
@@ -707,6 +728,10 @@ $("addWalker").addEventListener("submit",e=>{e.preventDefault();const f=$("newFi
   const name=f+" "+l;const dup=walkers.find(w=>w.name.toLowerCase()===name.toLowerCase());if(dup){selectWalker(dup.id);return;}
   const w={id:"w"+Date.now().toString(36),name};walkers.push(w);store.set("gbp2_users",walkers);$("newFirst").value="";$("newLast").value="";selectWalker(w.id);});
 $("goBtn").onclick=startTrip;$("pauseBtn").onclick=togglePause;$("finishBtn").onclick=finishTrip;
+$("resetBtn").onclick=()=>{if(!active||!confirm("Reset this walk’s miles and time to zero and keep tracking?"))return;
+  Object.assign(active,{start:Date.now(),miles:0,ms:0,resumedAt:Date.now(),paused:false,last:null});store.set(activeKey(),active);keepAwake(true);showLive();updateDay();};
+$("deleteBtn").onclick=()=>{if(!active||!confirm("Delete this walk? It won’t be added to today’s miles."))return;
+  active=null;store.set(activeKey(),null);keepAwake(false);showLive();updateDay();};
 $("dayToggle").onclick=()=>{const open=$("dayDetail").hidden;$("dayDetail").hidden=!open;$("daybar").classList.toggle("open",open);$("dayToggle").setAttribute("aria-expanded",open);};
 function initTracker(){if(cur&&!walkers.some(w=>w.id===cur))cur=null;active=cur?store.get(activeKey()):null;
   if(active&&!active.paused){active.last=null;keepAwake(true);} renderWho();showLive();updateDay();
