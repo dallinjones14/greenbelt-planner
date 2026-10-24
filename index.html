@@ -100,6 +100,23 @@ ol.list li:hover{background:var(--bg)}
 .leaflet-popup-content a{color:var(--teal);font-weight:700}
 .leaflet-bar a,.leaflet-control-layers{border-radius:12px!important}
 .leaflet-touch .leaflet-bar,.leaflet-touch .leaflet-control-layers{border:0;box-shadow:0 3px 12px rgba(29,42,68,.22)}
+.addbtn{font:700 .8rem var(--body);border:0;border-radius:999px;padding:7px 12px;cursor:pointer;background:var(--sun);color:var(--ink);margin-top:8px}
+.addbtn.on{background:var(--tealSoft);color:var(--teal)}
+.plus{width:30px;height:30px;border-radius:50%;border:1.5px solid var(--line);background:var(--panel);color:var(--ink);font:700 1rem/1 var(--body);cursor:pointer;display:grid;place-items:center}
+.plus.on{background:var(--sun);border-color:var(--sun)}
+ol.list li{grid-template-columns:54px 14px minmax(0,1fr) auto 30px}
+.plan{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.plan li{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:10px;align-items:center;background:var(--bg);border-radius:14px;padding:10px 12px}
+.plan .opts{grid-column:2/4;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.plan select{width:auto;padding:6px 8px;border-radius:999px;font-size:.8rem}
+.plan .x{border:0;background:transparent;color:var(--muted);font-size:1.2rem;cursor:pointer;width:30px;height:30px}
+.plan .when{font:500 .78rem var(--mono);color:var(--teal)}
+.plan .off{font-size:.8rem;color:var(--warn)}
+.cardhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.cardhead h2{margin:0;font:800 1.2rem var(--display)}
+.here{margin:0;font-size:.9rem;background:var(--tealSoft);border-radius:12px;padding:9px 12px}
+.stopic.planned{box-shadow:0 0 0 3px var(--sun),0 2px 6px rgba(0,0,0,.45)}
+.locbtn{position:absolute;z-index:1000;right:10px;bottom:44px;width:34px;height:34px;border-radius:12px;border:0;background:#fff;box-shadow:0 3px 12px rgba(29,42,68,.22);cursor:pointer;display:grid;place-items:center}
 .youare{width:16px;height:16px;border-radius:50%;background:#3d7bff;border:3px solid #fff;box-shadow:0 0 0 6px rgba(61,123,255,.25)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
@@ -110,6 +127,7 @@ ol.list li:hover{background:var(--bg)}
     <div id="map" role="application" aria-label="Satellite map of the Boise River Greenbelt"></div>
     <div class="loading" id="loading">Loading the Greenbelt path…</div>
     <div class="pickbar" id="pickbar">Tap the path to set your start</div>
+    <button type="button" class="locbtn" id="locbtn" aria-label="Show my location"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="#1d2a44" stroke-width="2"><circle cx="9" cy="9" r="4"/><path d="M9 1v3M9 14v3M1 9h3M14 9h3"/></svg></button>
   </div>
 
   <aside class="side">
@@ -189,6 +207,13 @@ ol.list li:hover{background:var(--bg)}
       </div>
       <p class="desc" id="desc"></p>
       <div class="warn" id="warn" hidden></div>
+      <p class="here" id="here" hidden></p>
+    </section>
+
+    <section class="card">
+      <div class="cardhead"><h2 id="planTitle">My stops</h2><span class="small" id="planBreaks"></span></div>
+      <p class="small" id="planEmpty">Tap <b>+</b> on any stop in the list, or <b>Add to my walk</b> on a map pin, to plan a coffee, meal or snack break. Break time is added to your finish time.</p>
+      <ol class="plan" id="plan"></ol>
     </section>
 
     <section class="card">
@@ -285,7 +310,13 @@ function pathTo(prev,t){const out=[];for(let u=t;u!==-1;u=prev[u])out.push(u);re
 // ---------------- state ----------------
 const saved=store.get("gbp2")||{};
 const st=Object.assign({mode:"round",dir:1,dist:26.2,pace:16,time:"07:30",filter:"all",
-  start:{name:"Barber Park",lat:43.5680,lon:-116.1310},end:{name:"Julia Davis Park",lat:43.6085,lon:-116.2030}},saved,{pick:null});
+  start:{name:"Barber Park",lat:43.5680,lon:-116.1310},end:{name:"Julia Davis Park",lat:43.6085,lon:-116.2030},planned:{}},saved,{pick:null});
+const keyOf=s=>s.name+"|"+s.addr;
+const DEFAULT_BREAK={coffee:15,food:30,store:5};
+const isPlanned=s=>!!st.planned[keyOf(s)];
+function togglePlan(s){const k=keyOf(s);if(st.planned[k])delete st.planned[k];else st.planned[k]={brk:DEFAULT_BREAK[s.type]||15,leg:"Out"};
+  drawStops();render(st.mode==="ab");}
+let me=null; // latest location fix
 let R=null; let SP=null; // R: computed route, SP: cached dijkstra for start node
 
 function fillSelect(sel,cur){sel.innerHTML="";TRAILHEADS.forEach((t,i)=>{const o=document.createElement("option");o.value=i;o.textContent=t.name;sel.appendChild(o);});
@@ -313,7 +344,12 @@ function compute(){if(!G.lat.length)return null;
   const s=nearestNode(st.start.lat,st.start.lon);
   if(s!==lastStartNode){SP=dijkstra(s);lastStartNode=s;}
   const {dist,prev}=SP;let warn="",t,out;
-  if(st.mode==="ab"){t=nearestNode(st.end.lat,st.end.lon);if(!isFinite(dist[t])){warn="Those two points aren’t connected by the Greenbelt path. Move one of them onto the same stretch of path.";return {nodes:[s],out:0,total:0,warn,s,t:s};}out=dist[t];}
+  if(st.mode==="ab"){t=nearestNode(st.end.lat,st.end.lon);if(!isFinite(dist[t])){warn="Those two points aren’t connected by the Greenbelt path. Move one of them onto the same stretch of path.";return {nodes:[s],out:0,total:0,warn,s,t:s};}
+    // route through planned stops, in order of distance from the start
+    const wps=STOPS.filter(isPlanned).map(x=>nearestNode(x.lat,x.lon)).filter(n=>isFinite(dist[n])&&n!==s&&n!==t).sort((a,b)=>dist[a]-dist[b]);
+    let nodes=[s];[...wps,t].forEach(n=>{const sp=dijkstra(nodes[nodes.length-1]);const seg=pathTo(sp.prev,n);if(isFinite(sp.dist[n]))nodes=nodes.concat(seg.slice(1));});
+    const cum=[0];for(let k=1;k<nodes.length;k++)cum.push(cum[k-1]+hav(G.lat[nodes[k-1]],G.lon[nodes[k-1]],G.lat[nodes[k]],G.lon[nodes[k]]));
+    out=cum[cum.length-1];return {nodes,cum,out,total:out,warn,s,t};}
   else{const want=st.mode==="round"?st.dist/2:st.dist;const sc=i=>st.dir*G.lon[i]; // lower is farther in chosen direction
     const startSc=sc(s);let best=-1,bs=Infinity;
     for(let i=0;i<dist.length;i++){if(Math.abs(dist[i]-want)<=0.12&&sc(i)<bs){bs=sc(i);best=i;}}
@@ -334,9 +370,17 @@ function pointAtMile(m){const n=R.nodes,c=R.cum;for(let k=1;k<n.length;k++){if(c
 
 function stopsOnWalk(){if(!R||R.nodes.length<2)return [];const out=[];
   STOPS.forEach(s=>{let bk=-1,bd=s.type==="store"?0.35:0.3;R.nodes.forEach((u,k)=>{const d=hav(s.lat,s.lon,G.lat[u],G.lon[u]);if(d<bd){bd=d;bk=k;}});
-    if(bk<0)return;const w=R.cum[bk];out.push({s,w,leg:st.mode==="round"?"Out":"",off:bd});
+    if(bk<0)return;if(st.mode==="ab"){let first=bk;for(let k=0;k<R.nodes.length;k++){if(hav(s.lat,s.lon,G.lat[R.nodes[k]],G.lon[R.nodes[k]])<=bd+0.01){first=k;break;}}bk=first;}const w=R.cum[bk];out.push({s,w,leg:st.mode==="round"?"Out":"",off:bd});
     if(st.mode==="round"&&R.out-w>0.15)out.push({s,w:R.total-w,leg:"Back",off:bd});});
   return out.sort((a,b)=>a.w-b.w);}
+
+// planned breaks along the walk: each planned stop counted once (round trip: on the leg you pick)
+function plannedVisits(){const on=stopsOnWalk(),out=[];
+  STOPS.filter(isPlanned).forEach(s=>{const p=st.planned[keyOf(s)];const hits=on.filter(x=>x.s===s);
+    const hit=hits.find(x=>!x.leg||x.leg===p.leg)||hits[0];
+    out.push(hit?{s,p,w:hit.w,leg:hit.leg,detour:hit.off>0.05?hit.off*2:0}:{s,p,w:null});});
+  return out.sort((a,b)=>(a.w??1e9)-(b.w??1e9));}
+function timeAt(w,visits){let extra=0;(visits||plannedVisits()).forEach(v=>{if(v.w!=null&&v.w<w-0.01)extra+=v.p.brk+v.detour*st.pace;});return w*st.pace+extra;}
 
 // ---------------- render ----------------
 const icon=(cls,html,size)=>L.divIcon({className:"",html:`<div class="${cls}">${html}</div>`,iconSize:[size,size],iconAnchor:[size/2,size/2]});
@@ -347,14 +391,17 @@ const pinIcon=(c,t)=>L.divIcon({className:"",html:`<div class="pin ${c}"><span>$
 const stopMarkers=new Map();
 
 function popupHtml(s){const on=stopsOnWalk().filter(x=>x.s===s);
-  const when=on.length?"On your walk at "+on.map(x=>`mile ${x.w.toFixed(1)} (${clockAt(x.w*st.pace)})`).join(" and ")+".":"Not on your current walk.";
+  const when=on.length?"On your walk at "+on.map(x=>`mile ${x.w.toFixed(1)} (${clockAt(timeAt(x.w))})`).join(" and ")+".":"Not on your current walk.";
   const kind=s.type==="store"?(s.fuel?"Gas station store":"Convenience store"):s.type==="coffee"?"Coffee":(s.coffeeToo?"Food + coffee":"Food");
   const q=encodeURIComponent(s.name+" "+s.addr);
-  return `<h3>${s.name}</h3><div style="color:#667">${kind} · ${s.addr}</div><p>${s.note}</p><p><b>${when}</b></p><p><a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank" rel="noopener">Directions & hours</a></p>`;}
+  return `<h3>${s.name}</h3><div style="color:#667">${kind} · ${s.addr}</div><p>${s.note}</p><p><b>${when}</b></p><p><a href="https://www.google.com/maps/search/?api=1&query=${q}" target="_blank" rel="noopener">Directions & hours</a></p><button type="button" class="addbtn${isPlanned(s)?" on":""}" data-key="${encodeURIComponent(keyOf(s))}">${isPlanned(s)?"✓ On my walk · remove":"+ Add to my walk"}</button>`;}
+map.on("popupopen",e=>{const b=e.popup.getElement().querySelector(".addbtn");if(!b)return;
+  b.onclick=()=>{const s=STOPS.find(x=>encodeURIComponent(keyOf(x))===b.dataset.key);if(!s)return;togglePlan(s);
+    const m=stopMarkers.get(s);if(m){m.openPopup();}};});
 
 function drawStops(){stopLayer.clearLayers();stopMarkers.clear();
   STOPS.forEach(s=>{if(st.filter!=="all"&&s.type!==st.filter&&!(st.filter==="coffee"&&s.coffeeToo))return;
-    const m=L.marker([s.lat,s.lon],{icon:icon("stopic "+s.type,s.type==="coffee"?CUP:s.type==="store"?BAG:FORK,s.type==="store"?24:28),title:s.name,zIndexOffset:500}).addTo(stopLayer);
+    const m=L.marker([s.lat,s.lon],{icon:icon("stopic "+s.type+(isPlanned(s)?" planned":""),s.type==="coffee"?CUP:s.type==="store"?BAG:FORK,s.type==="store"?24:28),title:s.name,zIndexOffset:500}).addTo(stopLayer);
     m.bindPopup(()=>popupHtml(s));stopMarkers.set(s,m);});}
 
 function render(fit){R=compute();routeLayer.clearLayers();markLayer.clearLayers();
@@ -366,22 +413,39 @@ function render(fit){R=compute();routeLayer.clearLayers();markLayer.clearLayers(
   L.marker(tP,{icon:pinIcon("f",st.mode==="round"?"↺":"F"),title:st.mode==="round"?"Turnaround":"Finish",zIndexOffset:800}).addTo(markLayer);
   L.marker(sP,{icon:pinIcon("s","S"),title:"Start",zIndexOffset:900}).addTo(markLayer);
   // summary
-  $("sDist").textContent=R.total.toFixed(1);const dur=R.total*st.pace;$("sTime").textContent=fmtDur(dur);$("sFinish").textContent=clockAt(dur);
+  const visits=plannedVisits();const detour=visits.reduce((a,v)=>a+(v.w!=null?v.detour:0),0),brk=visits.reduce((a,v)=>a+(v.w!=null?v.p.brk:0),0);
+  const miles=R.total+detour,dur=miles*st.pace+brk;
+  $("sDist").textContent=miles.toFixed(1);$("sTime").textContent=fmtDur(dur);$("sFinish").textContent=clockAt(dur);
+  renderPlan(visits,brk);
   const sN=st.start.name||placeName(sP[0],sP[1]),tN=placeName(tP[0],tP[1]);
-  $("desc").innerHTML=st.mode==="round"?`Start at <b>${sN}</b>, walk ${R.out.toFixed(1)} mi and turn around at <b>${tN}</b> around ${clockAt(R.out*st.pace)}, then retrace your steps.`
+  $("desc").innerHTML=st.mode==="round"?`Start at <b>${sN}</b>, walk ${R.out.toFixed(1)} mi and turn around at <b>${tN}</b> around ${clockAt(timeAt(R.out,visits))}, then retrace your steps.`
     :st.mode==="one"?`Start at <b>${sN}</b> and walk ${R.out.toFixed(1)} mi to finish at <b>${tN}</b>. Plan a ride back.`
     :`Walk from <b>${sN}</b> to <b>${st.end.name||tN}</b> along the Greenbelt: ${R.out.toFixed(1)} mi.`;
   $("warn").hidden=!R.warn;$("warn").textContent=R.warn;
-  renderList();
+  renderList(visits);updateHere();
   if(fit&&ll.length>1)map.fitBounds(L.latLngBounds(ll),{padding:[40,40]});
-  store.set("gbp2",{mode:st.mode,dir:st.dir,dist:st.dist,pace:st.pace,time:st.time,start:st.start,end:st.end,filter:st.filter});}
+  store.set("gbp2",{mode:st.mode,dir:st.dir,dist:st.dist,pace:st.pace,time:st.time,start:st.start,end:st.end,filter:st.filter,planned:st.planned});}
 
-function renderList(){const ol=$("list");ol.innerHTML="";
+function renderPlan(visits,brk){const ol=$("plan");ol.innerHTML="";$("planEmpty").hidden=visits.length>0;
+  $("planTitle").textContent=visits.length?`My stops (${visits.length})`:"My stops";
+  $("planBreaks").textContent=brk?`${fmtDur(brk)} of breaks`:"";
+  visits.forEach(v=>{const li=document.createElement("li");
+    li.innerHTML=`<span class="dot ${v.s.type}"></span><span><span class="nm"></span><br>${v.w!=null?`<span class="when">mile ${v.w.toFixed(1)}${v.leg?" · "+v.leg.toLowerCase():""} · arrive ${clockAt(timeAt(v.w,visits))}</span>`:`<span class="off">Not on this route. ${st.mode==="ab"?"It isn’t reachable along this stretch of path.":"Switch to Start → End to route through it, or change your start or distance."}</span>`}</span><button type="button" class="x" aria-label="Remove">×</button><div class="opts"></div>`;
+    li.querySelector(".nm").textContent=v.s.name;
+    const opts=li.querySelector(".opts");
+    const bs=document.createElement("select");bs.setAttribute("aria-label","Break length");[0,5,10,15,20,30,45,60].forEach(m=>{const o=document.createElement("option");o.value=m;o.textContent=m?`${m} min break`:"No break";bs.appendChild(o);});
+    bs.value=String(v.p.brk);bs.onchange=()=>{v.p.brk=+bs.value;render(false);};opts.appendChild(bs);
+    if(st.mode==="round"){const ls=document.createElement("select");ls.setAttribute("aria-label","Which leg");[["Out","On the way out"],["Back","On the way back"]].forEach(([k,t])=>{const o=document.createElement("option");o.value=k;o.textContent=t;ls.appendChild(o);});
+      ls.value=v.p.leg;ls.onchange=()=>{v.p.leg=ls.value;render(false);};opts.appendChild(ls);}
+    li.querySelector(".x").onclick=()=>togglePlan(v.s);ol.appendChild(li);});}
+
+function renderList(visits){const ol=$("list");ol.innerHTML="";
   const items=stopsOnWalk().filter(it=>st.filter==="all"||it.s.type===st.filter||(st.filter==="coffee"&&it.s.coffeeToo));
   $("stopsTitle").textContent=`Stops on your walk (${items.length})`;
   if(!items.length){const p=document.createElement("p");p.className="small";p.textContent="No stops of this kind on this stretch. Try a longer walk or a different start.";ol.appendChild(p);return;}
   items.forEach(it=>{const li=document.createElement("li");li.tabIndex=0;
-    li.innerHTML=`<span class="mi">mi ${it.w.toFixed(1)}${it.leg?`<span class="leg">${it.leg}</span>`:""}</span><span class="dot ${it.s.type}"></span><span><span class="nm"></span><br><span class="ad"></span></span><span class="tm">${clockAt(it.w*st.pace)}</span>`;
+    li.innerHTML=`<span class="mi">mi ${it.w.toFixed(1)}${it.leg?`<span class="leg">${it.leg}</span>`:""}</span><span class="dot ${it.s.type}"></span><span><span class="nm"></span><br><span class="ad"></span></span><span class="tm">${clockAt(timeAt(it.w,visits))}</span><button type="button" class="plus${isPlanned(it.s)?" on":""}" aria-label="${isPlanned(it.s)?"Remove from":"Add to"} my walk">${isPlanned(it.s)?"✓":"+"}</button>`;
+    li.querySelector(".plus").onclick=e=>{e.stopPropagation();togglePlan(it.s);};
     li.querySelector(".nm").textContent=it.s.name;li.querySelector(".ad").textContent=it.s.addr+(it.off>0.12?" · short detour":"");
     const go=()=>{map.setView([it.s.lat,it.s.lon],16);const m=stopMarkers.get(it.s);if(m)m.openPopup();if(window.innerWidth<=860)$("map").scrollIntoView({behavior:"smooth"});};
     li.onclick=go;li.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();go();}};ol.appendChild(li);});}
@@ -407,8 +471,27 @@ map.on("click",e=>{if(!G.lat.length)return;const i=nearestNode(e.latlng.lat,e.la
   if(px>40&&!st.pick)return; // ignore taps far from the path
   let which=st.pick||"start";if(!st.pick&&st.mode==="ab"){const ds=hav(e.latlng.lat,e.latlng.lng,st.start.lat,st.start.lon),de=hav(e.latlng.lat,e.latlng.lng,st.end.lat,st.end.lon);which=de<ds?"end":"start";}
   setPoint(which,e.latlng.lat,e.latlng.lng);st.pick=(st.pick==="start"&&st.mode==="ab")?"end":null;syncUI();render(false);});
-let youMarker=null;
-$("locate").onclick=()=>{if(!navigator.geolocation){alert("Location isn’t available in this browser.");return;}
+let youMarker=null,youCircle=null,firstFix=true;
+const inBox=(la,lo)=>la>=BBOX[0]&&la<=BBOX[2]&&lo>=BBOX[1]&&lo<=BBOX[3];
+function showMe(p){me={lat:p.coords.latitude,lon:p.coords.longitude,acc:p.coords.accuracy||30};
+  const ll=[me.lat,me.lon];
+  if(!youMarker){youCircle=L.circle(ll,{radius:me.acc,color:"#3d7bff",weight:1,fillOpacity:.12,interactive:false}).addTo(map);
+    youMarker=L.marker(ll,{icon:icon("youare","",16),interactive:false,zIndexOffset:1000}).addTo(map);}
+  else{youMarker.setLatLng(ll);youCircle.setLatLng(ll).setRadius(me.acc);}
+  if(firstFix){firstFix=false;if(inBox(me.lat,me.lon)&&R&&R.nodes.length>1){map.fitBounds(L.latLngBounds(R.nodes.map(u=>[G.lat[u],G.lon[u]])).extend(ll),{padding:[40,40]});}}
+  updateHere();}
+function updateHere(){const el=$("here");if(!me||!R||R.nodes.length<2){el.hidden=true;return;}
+  if(!inBox(me.lat,me.lon)){el.hidden=false;el.textContent="You’re away from the Greenbelt right now. Your blue dot will show on the map once you’re nearby.";return;}
+  let bk=-1,bd=0.15;R.nodes.forEach((u,k)=>{const d=hav(me.lat,me.lon,G.lat[u],G.lon[u]);if(d<bd){bd=d;bk=k;}});
+  el.hidden=false;
+  if(bk<0){el.textContent="You’re near the Greenbelt but not on today’s route.";return;}
+  const w=R.cum[bk];const next=plannedVisits().find(v=>v.w!=null&&v.w>w+0.05)||stopsOnWalk().map(x=>({s:x.s,w:x.w})).find(x=>x.w>w+0.05);
+  el.textContent=`You’re at about mile ${w.toFixed(1)} of your walk.`+(next?` Next up: ${next.s.name} in ${(next.w-w).toFixed(1)} mi.`:"");}
+function startWatch(){if(!navigator.geolocation)return;
+  navigator.geolocation.watchPosition(showMe,err=>{if(err.code===1){const l=$("loading");l.hidden=false;l.textContent="Allow location access to see yourself on the map";setTimeout(()=>l.hidden=true,5000);}},{enableHighAccuracy:true,maximumAge:10000,timeout:20000});}
+$("locbtn").onclick=()=>{if(me)map.setView([me.lat,me.lon],Math.max(map.getZoom(),16));else startWatch();};
+$("locate").onclick=()=>{if(me&&inBox(me.lat,me.lon)){setPoint("start",me.lat,me.lon);render(true);return;}
+  if(!navigator.geolocation){alert("Location isn’t available in this browser.");return;}
   $("locate").textContent="Finding you…";
   navigator.geolocation.getCurrentPosition(p=>{$("locate").textContent="Use my location";const la=p.coords.latitude,lo=p.coords.longitude;
     if(youMarker)youMarker.remove();youMarker=L.marker([la,lo],{icon:icon("youare","",16),interactive:false}).addTo(map);
@@ -460,6 +543,7 @@ async function geocodeStops(){const cache=store.get("gbp2_geo")||{};let changed=
   else{usingFallback=true;buildGraph([{ids:FALLBACK.map((_,i)=>i),pts:FALLBACK}]);L.polyline(FALLBACK,{color:"#ffffff",weight:2.5,opacity:.9,dashArray:"2 7",lineCap:"round"}).addTo(trailLayer);
     $("loading").textContent="Couldn’t reach OpenStreetMap, showing an approximate path";setTimeout(()=>$("loading").hidden=true,6000);}
   render(true);
+  startWatch();
   geocodeStops();
   loadStores();
 })();
